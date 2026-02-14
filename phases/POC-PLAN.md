@@ -132,6 +132,10 @@ WORKDIR /app
 CMD ["bash"]
 ```
 
+**Why single-stage (not multi-stage like Phase 2):** The POC needs `build-essential` at
+runtime for `pip install` and `poetry install` inside the container. The production
+Dockerfile in Phase 2 uses multi-stage to remove compilers from the final image.
+
 **Why `node:22-bookworm-slim`**: Debian Bookworm (LTS 2028), glibc (no musl issues),
 Anthropic uses this themselves. `node` user is UID 1000 — matches your host user.
 
@@ -168,6 +172,7 @@ docker run -d \
   --tmpfs /home/node:rw,noexec,nosuid,size=256m \
   -v ~/boot-workspace:/workspace \
   -v ~/boot-data:/data \
+  -v ~/boot-src:/app:ro \
   boot:latest \
   sleep infinity
 ```

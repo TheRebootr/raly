@@ -84,6 +84,7 @@ Things to verify in `docker info` output:
 
 - Server Version matches `docker --version`
 - Storage Driver: overlay2
+  - on my Omarchy, it is overlayfs!
 - Logging Driver: json-file
 - No warnings about deprecated features
 
@@ -159,24 +160,24 @@ Create the Dockerfile at `~/boot-src/Dockerfile`:
 # =============================================================================
 FROM node:22-bookworm-slim AS builder
 
-# Build tools needed for native npm/pip packages (not kept in final image)
+# Build tools needed for native pip packages (not kept in final image)
 RUN apt-get update && apt-get install -y --no-install-recommends \
     python3 \
     python3-pip \
     python3-venv \
     build-essential \
+    curl \
     && apt-get clean && rm -rf /var/lib/apt/lists/*
 
-# Install Claude Code CLI globally
-# Pin to a specific version once a working version is confirmed.
-# Using @latest means every rebuild may get a different version.
-RUN npm install -g @anthropic-ai/claude-code@latest
+# Install Claude Code CLI (native binary)
+# npm installation is deprecated; native installer is the recommended method.
+# Installs to ~/.local/bin/claude and ~/.local/share/claude
+RUN curl -fsSL https://claude.ai/install.sh | bash
 
 # Create Python venv for Boot's dependencies
 # This venv is copied to the runtime image, so deps survive --read-only rootfs.
 RUN python3 -m venv /opt/boot-venv
 # Boot's requirements will be installed here once they exist (Phase 5.x).
-# For now, the venv is empty but ready.
 # Example: COPY requirements.txt /tmp/ && /opt/boot-venv/bin/pip install -r /tmp/requirements.txt
 
 # =============================================================================
@@ -193,9 +194,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates \
     && apt-get clean && rm -rf /var/lib/apt/lists/*
 
-# Copy Claude Code CLI from builder
-COPY --from=builder /usr/local/lib/node_modules /usr/local/lib/node_modules
-COPY --from=builder /usr/local/bin/claude /usr/local/bin/claude
+# Copy Claude Code CLI from builder (native binary)
+COPY --from=builder /root/.local/bin/claude /usr/local/bin/claude
+COPY --from=builder /root/.local/share/claude /usr/local/share/claude
 
 # Copy Python venv from builder
 COPY --from=builder /opt/boot-venv /opt/boot-venv
@@ -212,6 +213,9 @@ RUN mkdir -p /workspace /data && chown node:node /workspace /data
 
 USER node
 
+# Disable Claude Code auto-updater (read-only rootfs, managed via image rebuilds)
+ENV DISABLE_AUTOUPDATER=1
+
 # Put venv on PATH so Boot's Python deps are available
 ENV PATH="/opt/boot-venv/bin:$PATH"
 
@@ -226,8 +230,14 @@ WORKDIR /app
 CMD ["bash"]
 ```
 
+**Why native installer instead of npm:** As of 2026, `npm install -g @anthropic-ai/claude-code`
+is deprecated. The native installer (`claude.ai/install.sh`) produces a standalone binary
+at `~/.local/bin/claude`. This is copied to `/usr/local/bin/claude` in the runtime image.
+Auto-updates are disabled via `DISABLE_AUTOUPDATER=1` since the read-only rootfs cannot
+be updated at runtime — Claude Code version is managed by rebuilding the image.
+
 **Why multi-stage:** The build stage installs `build-essential` (gcc, make) to compile
-native npm/pip modules. The runtime stage copies only the compiled artifacts. This means
+native pip modules. The runtime stage copies only the compiled artifacts. This means
 the final image has no compilers — an attacker who gains code execution inside the
 container cannot compile C code.
 
@@ -259,6 +269,55 @@ trivy image boot:latest
 Review trivy output for HIGH and CRITICAL vulnerabilities. Document any that cannot be
 patched (upstream issues) as accepted risk.
 
+#### Trivy scan results (2026-02-14, boot:latest on Debian 12.13)
+
+**CRITICAL (2) — accepted as upstream risk, no Debian fix available:**
+
+| CVE            | Package                                    | Risk for Boot                                                                                                                          |
+| -------------- | ------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------- |
+| CVE-2025-7458  | libsqlite3 — integer overflow              | **Low.** Boot uses SQLite via Python, not the C API directly. Exploitable only with crafted SQL input — Boot controls its own queries. |
+| CVE-2023-45853 | zlib1g — heap overflow in `zipOpenNewFile` | **Low.** Vulnerability is in zlib's zip-writing API. Boot doesn't create zip files.                                                    |
+
+**HIGH — Debian "no fix" (32 reports, ~8 unique CVEs):**
+
+The count is inflated — same CVEs repeated across `python3.11`, `python3.11-minimal`,
+`libpython3.11-stdlib`, etc. Unique issues:
+
+| CVE                  | Package                                 | Risk for Boot                                                                                                                                                                   |
+| -------------------- | --------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| CVE-2025-48384/48385 | git — arbitrary code exec / file writes | **Medium.** Boot uses git, but attacker would need a crafted malicious repo. Mitigated: Boot only clones repos the user directs it to, and writes are confined to `/workspace`. |
+| CVE-2026-0861        | glibc — memalign heap corruption        | **Low.** Requires specific allocation patterns, not easily triggerable remotely.                                                                                                |
+| CVE-2023-2953        | libldap — null pointer deref            | **None.** Boot doesn't use LDAP.                                                                                                                                                |
+| CVE-2025-13836       | python — http.client read buffering DoS | **Low.** Boot uses `python-telegram-bot` / `httpx`, not `http.client`.                                                                                                          |
+| CVE-2025-15366/15367 | python — IMAP/POP3 command injection    | **None.** Boot doesn't use IMAP or POP3.                                                                                                                                        |
+| CVE-2025-8194        | python — tarfile infinite loop          | **Low.** Boot doesn't parse tarballs from untrusted sources.                                                                                                                    |
+| CVE-2026-1299        | python — email header injection         | **None.** Boot doesn't send emails.                                                                                                                                             |
+
+**HIGH — Node.js (10 reports, ~4 unique CVEs) — fixable via base image update:**
+
+| CVE            | Package | Installed     | Fix    | Risk for Boot                                                                                                |
+| -------------- | ------- | ------------- | ------ | ------------------------------------------------------------------------------------------------------------ |
+| CVE-2025-64756 | glob    | 10.4.5        | 10.5.0 | **Low.** Command injection via malicious filenames. Contained in `/workspace`.                               |
+| CVE-2026-23745 | tar     | 6.2.1 / 7.4.3 | 7.5.3  | **Medium.** Arbitrary file overwrite via symlink poisoning. In npm's bundled tar, used during `npm install`. |
+| CVE-2026-23950 | tar     | 6.2.1 / 7.4.3 | 7.5.4  | **Medium.** File overwrite via Unicode path collision. Same npm tar.                                         |
+| CVE-2026-24842 | tar     | 6.2.1 / 7.4.3 | 7.5.7  | **Medium.** File creation via path traversal. Same npm tar.                                                  |
+
+These live in npm's bundled dependencies from the `node:22-bookworm-slim` base image.
+Mitigated by `--read-only` rootfs and `noexec` tmpfs. Fixed when the base image ships
+a newer npm.
+
+**HIGH — Python (2) — fixable but low relevance:**
+
+| CVE            | Package    | Installed | Fix    | Risk for Boot                                                      |
+| -------------- | ---------- | --------- | ------ | ------------------------------------------------------------------ |
+| CVE-2024-6345  | setuptools | 66.1.1    | 70.0.0 | **Low.** RCE via `PackageIndex` — Boot doesn't use `easy_install`. |
+| CVE-2025-47273 | setuptools | 66.1.1    | 78.1.1 | **Low.** Path traversal in `PackageIndex` — same, not used.        |
+
+**Assessment: 0 showstoppers.** No vulnerabilities are exploitable in Boot's normal
+operation. The git CVEs are the most relevant but mitigated by volume scoping and
+user-directed cloning. All Debian "no fix" items are upstream — rescan on image rebuild
+(Phase 7).
+
 ### 2.9 Test Container Lifecycle
 
 Test that the container starts, runs, and stops correctly with all the production flags.
@@ -281,6 +340,7 @@ docker run -d \
   --tmpfs /home/node:rw,noexec,nosuid,size=256m \
   -v ~/boot-workspace:/workspace \
   -v ~/boot-data:/data \
+  -v ~/boot-src:/app:ro \
   boot:latest \
   sleep infinity
 
@@ -290,6 +350,10 @@ docker ps --filter name=boot-test
 # Verify resource limits are applied
 docker inspect boot-test --format '{{.HostConfig.Memory}}'
 # Should show: 4294967296 (4GB in bytes)
+
+# Verify memory swap limit
+docker inspect boot-test --format '{{.HostConfig.MemorySwap}}'
+# Should show: 6442450944 (6GB in bytes)
 
 # Verify security options
 docker inspect boot-test --format '{{.HostConfig.SecurityOpt}}'
@@ -310,12 +374,21 @@ docker exec boot-test whoami
 # Verify volumes are accessible
 docker exec boot-test ls -la /workspace
 docker exec boot-test ls -la /data
+docker exec boot-test ls -la /app
 
 # Verify /tmp is writable (tmpfs)
 docker exec boot-test touch /tmp/test && echo "/tmp writable" || echo "/tmp NOT writable"
 
+# Verify noexec on /tmp (binary execution should fail)
+docker exec boot-test sh -c 'cp /usr/bin/id /tmp/id && /tmp/id' 2>&1
+# Should show: Permission denied
+
 # Verify rootfs is read-only (write to /usr should fail)
 docker exec boot-test touch /usr/test 2>&1
+# Should show: Read-only file system
+
+# Verify /app is read-only (boot-src mounted :ro)
+docker exec boot-test touch /app/test 2>&1
 # Should show: Read-only file system
 
 # Verify network works (outbound)
@@ -413,22 +486,22 @@ docker system prune -f
 
 Boot's container runs with these constraints:
 
-| Constraint              | Value                 | Purpose                                                    |
-| ----------------------- | --------------------- | ---------------------------------------------------------- |
-| `--init`                | tini as PID 1         | Zombie reaping + signal forwarding                         |
-| `--memory=4g`           | Hard limit            | OOM-killed if exceeded, protects host                      |
-| `--memory-swap=6g`      | Swap limit            | 2GB swap buffer for peaks                                  |
-| `--cpus=4`              | CPU quota             | Reserves 2 host cores for desktop                          |
-| `--pids-limit=512`      | Process limit         | Fork bomb protection                                       |
-| `--user 1000:1000`      | Non-root              | Matches host UID, no privilege inside                      |
-| `--no-new-privileges`   | Security option       | Blocks setuid/setgid privilege escalation                  |
-| `--cap-drop ALL`        | Drop all capabilities | No Linux capabilities (NET_RAW, MKNOD, etc.)              |
-| `--read-only`           | Immutable rootfs      | Container filesystem cannot be modified                    |
-| `--tmpfs /tmp`          | 512MB, noexec, nosuid | Scratch space, no executable payloads, lost on restart     |
-| `--tmpfs /home/node`    | 256MB, noexec, nosuid | User home scratch, no executable payloads, lost on restart |
-| Volumes                 | workspace + data only | Blast radius is these two directories                      |
-| `boot-src:/app:ro`      | Read-only source      | Boot cannot modify its own harness code                    |
-| Network                 | Default bridge        | Full outbound (needed for Anthropic API, package installs) |
+| Constraint            | Value                 | Purpose                                                    |
+| --------------------- | --------------------- | ---------------------------------------------------------- |
+| `--init`              | tini as PID 1         | Zombie reaping + signal forwarding                         |
+| `--memory=4g`         | Hard limit            | OOM-killed if exceeded, protects host                      |
+| `--memory-swap=6g`    | Swap limit            | 2GB swap buffer for peaks                                  |
+| `--cpus=4`            | CPU quota             | Reserves 2 host cores for desktop                          |
+| `--pids-limit=512`    | Process limit         | Fork bomb protection                                       |
+| `--user 1000:1000`    | Non-root              | Matches host UID, no privilege inside                      |
+| `--no-new-privileges` | Security option       | Blocks setuid/setgid privilege escalation                  |
+| `--cap-drop ALL`      | Drop all capabilities | No Linux capabilities (NET_RAW, MKNOD, etc.)               |
+| `--read-only`         | Immutable rootfs      | Container filesystem cannot be modified                    |
+| `--tmpfs /tmp`        | 512MB, noexec, nosuid | Scratch space, no executable payloads, lost on restart     |
+| `--tmpfs /home/node`  | 256MB, noexec, nosuid | User home scratch, no executable payloads, lost on restart |
+| Volumes               | workspace + data only | Blast radius is these two directories                      |
+| `boot-src:/app:ro`    | Read-only source      | Boot cannot modify its own harness code                    |
+| Network               | Default bridge        | Full outbound (needed for Anthropic API, package installs) |
 
 **What the container CANNOT do:**
 
@@ -456,10 +529,12 @@ mutable state (SQLite databases, session data, config) in a single read-write vo
 
 If the container is compromised, an attacker has access to both credentials AND can
 tamper with audit logs. A more paranoid design would:
+
 - Mount individual credential files as read-only bind mounts
 - Keep mutable state (SQLite) in a separate writable volume
 
 We accept the single-volume design because:
+
 1. The container IS the trust boundary — if it's compromised, credentials are already
    in-memory regardless of mount layout
 2. Splitting adds operational complexity (more mounts, more paths, more to manage)
@@ -477,6 +552,7 @@ With `--read-only` and `noexec` on tmpfs, runtime `npm install -g` / `pip instal
 system paths will fail, and executables written to /tmp cannot run. This is by design.
 
 All persistent dependencies belong in the Dockerfile:
+
 - npm packages → installed globally in the build stage, copied to runtime
 - Python packages → installed into `/opt/boot-venv` in the build stage, copied to runtime
 - When deps change → rebuild the image (`docker build`), restart the container
@@ -515,6 +591,9 @@ brings it back. Boot's application must be crash-resilient (SQLite state trackin
 - [ ] Test container: `no-new-privileges` security option confirmed
 - [ ] Test container: all capabilities dropped (`--cap-drop ALL`)
 - [ ] Test container: read-only rootfs confirmed, /tmp writable, rootfs writes fail
+- [ ] Test container: `/app` read-only confirmed (boot-src mounted `:ro`)
+- [ ] Test container: noexec on /tmp confirmed (binary execution fails)
+- [ ] Test container: memory swap limit confirmed (`MemorySwap` = 6442450944)
 - [ ] systemd unit created and enabled (but not started)
 - [ ] systemd unit uses absolute paths (no `~`, correct username)
 - [ ] Test artifacts cleaned up
@@ -529,13 +608,13 @@ brings it back. Boot's application must be crash-resilient (SQLite state trackin
 
 ## Removed from Original Phase 2 (and why)
 
-| Removed                                            | Reason                                                                        |
-| -------------------------------------------------- | ----------------------------------------------------------------------------- |
-| Per-container security contract for sub-containers  | Old architecture. No sub-containers. Boot's own container gets these flags.    |
-| `--network none` verification                      | Boot container needs network for Claude API access.                            |
-| userns-remap discussion                            | No longer relevant — Boot runs as UID 1000, no sub-containers.                |
-| Modify `daemon.json`                               | Omarchy owns it. Never touch.                                                 |
-| Phase 5.7 (Dockerfile.sandbox)                     | Merged into this phase. The Boot container IS the sandbox.                     |
+| Removed                                            | Reason                                                                      |
+| -------------------------------------------------- | --------------------------------------------------------------------------- |
+| Per-container security contract for sub-containers | Old architecture. No sub-containers. Boot's own container gets these flags. |
+| `--network none` verification                      | Boot container needs network for Claude API access.                         |
+| userns-remap discussion                            | No longer relevant — Boot runs as UID 1000, no sub-containers.              |
+| Modify `daemon.json`                               | Omarchy owns it. Never touch.                                               |
+| Phase 5.7 (Dockerfile.sandbox)                     | Merged into this phase. The Boot container IS the sandbox.                  |
 
 **Clarification:** `--cap-drop ALL`, `--security-opt=no-new-privileges`, and `--read-only`
 were previously specified for ephemeral sub-containers. They are now applied to Boot's own

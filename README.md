@@ -133,10 +133,12 @@ L6:  No Docker socket, no --privileged, non-root user
 L7:  Capability + privilege hardening (cap-drop ALL, no-new-privileges)
 L8:  Immutable container (read-only rootfs, noexec tmpfs, source read-only)
 L9:  Multi-stage image (no compilers in runtime)
-L10: Telegram allowlist (single numeric user ID)
-L11: Token bucket rate limiter
-L12: Mounted volumes as explicit blast radius
-L13: SQLite audit trail
+L10: Auth middleware + input validation (inside Boot)
+L11: Telegram allowlist (single numeric user ID)
+L12: Token bucket rate limiter
+L13: Mounted volumes as explicit blast radius
+L14: SQLite audit trail
+L15: 3 Python dependencies (auditable in minutes)
 ```
 
 ## Known Operational Concerns

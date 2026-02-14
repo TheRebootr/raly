@@ -37,7 +37,7 @@ step-by-step implementation specs.
 - Never mount the Docker socket into Boot's container.
 - Never run Boot's container with `--privileged`.
 - Container user must be UID 1000:1000 (matches host user).
-- Resource limits: `--memory=4g --cpus=4 --pids-limit=512`.
+- Resource limits: `--memory=4g --memory-swap=6g --cpus=4 --pids-limit=512`.
 - Security hardening: `--cap-drop ALL --security-opt=no-new-privileges --read-only`.
 - Tmpfs mounts must use `noexec,nosuid` with size limits.
 - Boot source mounted read-only (`boot-src:/app:ro`).
