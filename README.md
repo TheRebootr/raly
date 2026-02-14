@@ -64,7 +64,7 @@ You (Telegram) ──→ Telegram API ──→ [polling, no inbound ports]
 
 ## Target Environment
 
-Built for and tested on:
+Tested on a **dedicated experiment machine** — not my daily driver. I'd recommend the same while you're learning. Dedicate a spare machine or VM to this.
 
 - **Hardware**: Mac Mini 2018 (i5-8500B 6-core, 32GB RAM)
 - **Host OS**: [Omarchy](https://omarchy.com) 3.3.3 (Arch Linux)
