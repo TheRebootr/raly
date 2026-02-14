@@ -2,11 +2,13 @@
 
 ## What This Project Is
 
-RALY (Run Assistants Locally Yourself) is a developer reference repo for running AI coding
-assistants inside Docker containers on your own machine. "Boot" is RALY's first-class
-reference assistant — a Python-based harness that runs Claude Code CLI inside a Docker
-container on a Mac Mini 2018 (Omarchy 3.3.3 / Arch Linux). The user communicates with Boot
-exclusively via Telegram. The phases/ directory contains step-by-step implementation specs.
+RALY (Run Assistants Locally Yourself) is a developer reference repo for running AI
+assistants inside Docker containers on your own machine. The system layer is
+assistant-agnostic — any AI assistant (coding, chat, agentic) can be dropped in.
+"Boot" is RALY's first-class reference assistant — a Python-based harness that runs
+Claude Code CLI inside a Docker container on a Mac Mini 2018 (Omarchy 3.3.3 / Arch Linux).
+The user communicates with Boot exclusively via Telegram. The phases/ directory contains
+step-by-step implementation specs.
 
 ## Core Architecture
 

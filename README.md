@@ -1,12 +1,12 @@
 # RALY — Run Assistants Locally Yourself
 
-A developer guide for running AI coding assistants inside Docker containers on your own machine — with known blast radius, one-command kill switch, and zero cloud dependencies.
+A developer guide for running AI assistants inside Docker containers on your own machine — with known blast radius, one-command kill switch, and zero cloud dependencies.
 
-**RALY is not a product.** It's a reference repo. Fork it, adapt it, learn from it.
+**RALY is not a product — yet.** Today it's a reference repo. Fork it, adapt it, learn from it. Tomorrow: `raly up boot`.
 
 ## The Idea
 
-Every new AI coding assistant (Claude Code, OpenClaw, Aider, etc.) wants to run on your machine with full access. You want to try them. You also want to:
+Every new AI assistant (Claude Code, OpenClaw, Nanoclaw, moltbot, etc.) wants to run on your machine with full access. You want to try them. You also want to:
 
 - **Know exactly what it can touch** — not "trust me, it's sandboxed"
 - **Kill it with one command** — `docker stop boot`
@@ -48,9 +48,9 @@ You (Telegram) ──→ Telegram API ──→ [polling, no inbound ports]
 
 ### Key Design Decisions
 
-- **The assistant lives in a container, not on the host.** Claude Code CLI needs network access for the Anthropic API. Instead of hacking around `--network none`, the assistant gets its own Debian environment with full outbound access. The container boundary *is* the security boundary.
+- **The assistant lives in a container, not on the host.** The assistant gets its own Debian environment with full outbound access. The container boundary *is* the security boundary.
 - **No sub-containers.** No Docker-in-Docker, no per-task ephemeral containers. The assistant runs directly inside its container. Simple.
-- **The user is the trust boundary.** Single Telegram user ID allowlist. You accept responsibility for prompt injection risks. RALY protects against unauthorized access, not against yourself.
+- **The user is the trust boundary.** You accept responsibility for prompt injection risks. RALY protects against unauthorized access, not against yourself.
 - **Tailor-fit, not template.** Every decision is made for a specific machine, OS, and threat model. Generic hardening checklists are traps.
 
 ## Target Environment
@@ -132,6 +132,12 @@ L10: SQLite audit trail
 | `omarchy-update` restarts Docker daemon | Container dies | `--restart=unless-stopped` + crash-resilient design |
 | No AppArmor/SELinux on Arch | Fewer kernel-level restrictions | Accepted trade-off, Docker seccomp still active |
 | Mac Mini 2018 thermal throttling | 20-40% perf loss during sustained builds | Workloads are bursty, chassis recovers between API waits |
+
+## Roadmap
+
+- **Now**: Reference repo — phase docs, manual setup, learn the system
+- **Next**: `raly` CLI (npm package) — automate prerequisite checks, `raly up boot`, `raly down boot`, `raly status`
+- **Later**: Drop-in assistant configs — community-contributed setups for different AI assistants
 
 ## Prior Art
 
