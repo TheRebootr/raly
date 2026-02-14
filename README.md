@@ -12,7 +12,7 @@ I couldn't find a simple guide that said: "here's how to set up a safe playgroun
 
 So I'm building one. And I'm documenting every step because maybe you want the same thing.
 
-**This is a personal project.** I'm learning as I go, making mistakes, and writing it all down. If you know more about Linux, containers, or security than I do — I'd love your help making this easier and safer for everyone.
+This is a personal project. I'm learning as I go and testing on a spare machine, making mistakes, and writing it all down. If you know more about Linux, containers, or security than I do **— I'd love your help making this easier and safer for everyone**.
 
 Today it's a reference repo. Fork it, adapt it, learn from it.
 
