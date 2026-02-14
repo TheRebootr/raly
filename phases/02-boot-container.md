@@ -576,27 +576,27 @@ brings it back. Boot's application must be crash-resilient (SQLite state trackin
 
 ## Verification Checklist
 
-- [ ] Docker service enabled and started (`systemctl is-enabled docker.service`)
-- [ ] `docker info` runs clean with no errors
-- [ ] `/etc/docker/daemon.json` is **unmodified** (matches Omarchy's original)
-- [ ] Docker socket permissions: `srw-rw---- root docker`
-- [ ] trivy installed and working (`trivy --version`)
-- [ ] `.dockerignore` created in `~/boot-src`
-- [ ] Host directories created: `~/boot-workspace`, `~/boot-data`, `~/boot-src`
-- [ ] Boot image built successfully (`docker images boot`)
-- [ ] Boot image scanned with trivy, vulnerabilities reviewed
-- [ ] Test container: starts, runs as UID 1000, volumes accessible, network works
-- [ ] Test container: Claude Code CLI installed and responds to `--version`
-- [ ] Test container: no Docker socket access
-- [ ] Test container: `no-new-privileges` security option confirmed
-- [ ] Test container: all capabilities dropped (`--cap-drop ALL`)
-- [ ] Test container: read-only rootfs confirmed, /tmp writable, rootfs writes fail
-- [ ] Test container: `/app` read-only confirmed (boot-src mounted `:ro`)
-- [ ] Test container: noexec on /tmp confirmed (binary execution fails)
-- [ ] Test container: memory swap limit confirmed (`MemorySwap` = 6442450944)
+- [x] Docker service enabled and started (`systemctl is-enabled docker.service`)
+- [x] `docker info` runs clean with no errors
+- [x] `/etc/docker/daemon.json` is **unmodified** (matches Omarchy's original)
+- [x] Docker socket permissions: `srw-rw---- root docker`
+- [x] trivy installed and working (`trivy --version`)
+- [x] `.dockerignore` created in `~/boot-src`
+- [x] Host directories created: `~/boot-workspace`, `~/boot-data`, `~/boot-src`
+- [x] Boot image built successfully (`docker images boot`)
+- [x] Boot image scanned with trivy, vulnerabilities reviewed
+- [x] Test container: starts, runs as UID 1000, volumes accessible, network works
+- [x] Test container: Claude Code CLI installed and responds to `--version`
+- [x] Test container: no Docker socket access
+- [x] Test container: `no-new-privileges` security option confirmed
+- [x] Test container: all capabilities dropped (`--cap-drop ALL`)
+- [x] Test container: read-only rootfs confirmed, /tmp writable, rootfs writes fail
+- [x] Test container: `/app` read-only confirmed (boot-src mounted `:ro`)
+- [x] Test container: noexec on /tmp confirmed (binary execution fails)
+- [x] Test container: memory swap limit confirmed (`MemorySwap` = 6442450944)
 - [ ] systemd unit created and enabled (but not started)
 - [ ] systemd unit uses absolute paths (no `~`, correct username)
-- [ ] Test artifacts cleaned up
+- [x] Test artifacts cleaned up
 
 ## Outputs for Downstream Phases
 
