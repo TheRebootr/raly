@@ -169,11 +169,6 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     curl \
     && apt-get clean && rm -rf /var/lib/apt/lists/*
 
-# Install Claude Code CLI (native binary)
-# npm installation is deprecated; native installer is the recommended method.
-# Installs to ~/.local/bin/claude and ~/.local/share/claude
-RUN curl -fsSL https://claude.ai/install.sh | bash
-
 # Create Python venv for Boot's dependencies
 # This venv is copied to the runtime image, so deps survive --read-only rootfs.
 RUN python3 -m venv /opt/boot-venv
@@ -194,9 +189,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates \
     && apt-get clean && rm -rf /var/lib/apt/lists/*
 
-# Copy Claude Code CLI from builder (native binary)
-COPY --from=builder /root/.local/bin/claude /usr/local/bin/claude
-COPY --from=builder /root/.local/share/claude /usr/local/share/claude
+# Install Claude Code CLI via npm (no compilers needed, runs in Node.js image)
+# npm method is deprecated but functional — native installer has known segfault
+# and OOM issues on AMD64 Debian Bookworm in Docker builds (GitHub #12044, #22536).
+RUN npm install -g @anthropic-ai/claude-code@latest
 
 # Copy Python venv from builder
 COPY --from=builder /opt/boot-venv /opt/boot-venv
@@ -230,11 +226,15 @@ WORKDIR /app
 CMD ["bash"]
 ```
 
-**Why native installer instead of npm:** As of 2026, `npm install -g @anthropic-ai/claude-code`
-is deprecated. The native installer (`claude.ai/install.sh`) produces a standalone binary
-at `~/.local/bin/claude`. This is copied to `/usr/local/bin/claude` in the runtime image.
-Auto-updates are disabled via `DISABLE_AUTOUPDATER=1` since the read-only rootfs cannot
-be updated at runtime — Claude Code version is managed by rebuilding the image.
+**Why npm instead of native installer:** The native installer (`claude.ai/install.sh`) is
+Anthropic's recommended method, but has known issues in Docker on AMD64 Debian Bookworm:
+segfault during install (GitHub #12044, closed NOT_PLANNED) and OOM when run as root during
+build (GitHub #22536). The npm package (`@anthropic-ai/claude-code`) is deprecated but
+functional and actively published. Since the runtime image already has Node.js, npm install
+works reliably with no multi-stage copy needed. Auto-updates are disabled via
+`DISABLE_AUTOUPDATER=1` since the read-only rootfs cannot be updated at runtime — Claude
+Code version is managed by rebuilding the image. Pin a specific version
+(e.g. `@anthropic-ai/claude-code@2.1.39`) for reproducible builds.
 
 **Why multi-stage:** The build stage installs `build-essential` (gcc, make) to compile
 native pip modules. The runtime stage copies only the compiled artifacts. This means
@@ -594,8 +594,8 @@ brings it back. Boot's application must be crash-resilient (SQLite state trackin
 - [x] Test container: `/app` read-only confirmed (boot-src mounted `:ro`)
 - [x] Test container: noexec on /tmp confirmed (binary execution fails)
 - [x] Test container: memory swap limit confirmed (`MemorySwap` = 6442450944)
-- [ ] systemd unit created and enabled (but not started)
-- [ ] systemd unit uses absolute paths (no `~`, correct username)
+- [ ] systemd unit created and enabled (but not started) — deferred to Phase 5.x (no app code yet)
+- [ ] systemd unit uses absolute paths (no `~`, correct username) — deferred to Phase 5.x
 - [x] Test artifacts cleaned up
 
 ## Outputs for Downstream Phases
@@ -632,8 +632,9 @@ Before executing this phase, perform a web search for:
 
 Verify that:
 
-1. `node:22-bookworm-slim` is the current LTS Node.js image on Debian Bookworm
-2. Claude Code CLI's npm package name is `@anthropic-ai/claude-code`
+1. `node:22-bookworm-slim` is still supported (Maintenance LTS until April 2027; Node 24 is now Active LTS)
+2. Claude Code CLI's npm package `@anthropic-ai/claude-code` is still published and functional
 3. The systemd unit file syntax is correct for the current systemd version
 4. trivy is still in Arch's `extra` repository
 5. No breaking changes in Docker's `--init` flag behavior
+6. Native installer issues on AMD64 Bookworm (GitHub #12044, #22536) — check if resolved

@@ -83,8 +83,8 @@ The project is split into two layers:
 | --------------------------------------- | --------------------------------------------------- | ------ |
 | [Phase 0](phases/00-preflight.md)       | Pre-flight checks                                   | Done   |
 | [Phase 1](phases/01-os-hardening.md)    | OS-level hardening (sysctl, UFW, core dumps)        | Done   |
-| [Phase 2](phases/02-boot-container.md)  | Container setup (Dockerfile, volumes, systemd)      | Ready  |
-| [Phase 3](phases/03-tailscale-setup.md) | Tailscale ACL configuration                         | Ready  |
+| [Phase 2](phases/02-boot-container.md)  | Container setup (Dockerfile, volumes, systemd)      | Done   |
+| [Phase 3](phases/03-tailscale-setup.md) | Tailscale ACL configuration                         | Done   |
 | [POC Plan](phases/POC-PLAN.md)          | Validation with RichardAtCT's bot as a drop-in test | Ready  |
 
 ### Boot Layer (reference assistant implementation)

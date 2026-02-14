@@ -17,245 +17,22 @@ architecture works end-to-end before building our own implementation.
 
 You need these things ready before execution:
 
-- [ ] **Anthropic API key** — from console.anthropic.com. This is for the `ANTHROPIC_API_KEY`
-  env var. Note: API key means pay-as-you-go billing, not subscription credits.
+- [ ] **Claude Pro or Max subscription** — or an Anthropic API key from console.anthropic.com.
+      The POC is configured for subscription auth (CLI subprocess mode). If using an API key
+      instead, see the "API key alternative" note in Step 4.2.
 - [ ] **Telegram bot token** — create via @BotFather on Telegram (`/newbot`). Record the token.
 - [ ] **Your Telegram user ID** — message @userinfobot on Telegram, it replies with your numeric ID.
 - [ ] **Telegram bot username** — the username you chose in BotFather (without the @).
 
 ---
 
-## Step 1: Complete Phase 0-1 Gaps
+## Steps 1-3: COMPLETE
 
-Phases 0-1 are done except two items that were skipped. Both are cheap insurance.
+Phases 0-3 are done. The host is hardened, the Boot container image is built, trivy
+scanned, lifecycle tested, and Tailscale SSH is configured with ACLs. See individual
+phase docs for verification checklists.
 
-### 1.1 Core Dump Restrictions (Phase 1.6 — was skipped)
-
-Core dumps can leak secrets (API keys, bot tokens) from process memory.
-
-Add to `/etc/security/limits.conf`:
-```
-* hard core 0
-* soft core 0
-```
-
-Create `/etc/systemd/coredump.conf.d/disable.conf`:
-```ini
-[Coredump]
-Storage=none
-ProcessSizeMax=0
-```
-
-### 1.2 Kernel Module Blacklist (Phase 1.7 — was skipped)
-
-Create `/etc/modprobe.d/raly-blacklist.conf`:
-```
-blacklist cramfs
-blacklist hfs
-blacklist hfsplus
-blacklist dccp
-blacklist sctp
-blacklist rds
-blacklist tipc
-```
-
-These are uncommon filesystems and network protocols. Reduces kernel attack surface.
-No USB/thunderbolt blacklisting — desktop use.
-
----
-
-## Step 2: Execute Phase 2 — Build the Boot Container
-
-### 2.1 Docker Service
-
-Verify Docker is enabled and healthy. This should already be the case from Phase 0.
-
-```bash
-sudo systemctl enable docker.service
-systemctl is-enabled docker.service   # → enabled
-systemctl is-active docker.service    # → active
-```
-
-Verify daemon.json is untouched (Omarchy's):
-```bash
-cat /etc/docker/daemon.json
-# Should show: log-driver, log-opts, dns, bip — nothing else
-```
-
-Verify socket permissions:
-```bash
-ls -la /var/run/docker.sock
-# → srw-rw---- 1 root docker
-```
-
-### 2.2 Install trivy
-
-```bash
-sudo pacman -S trivy --needed
-```
-
-### 2.3 Create Host Directories
-
-```bash
-mkdir -p ~/boot-workspace ~/boot-data ~/boot-src
-chmod 750 ~/boot-workspace ~/boot-data ~/boot-src
-```
-
-These will be bind-mounted into the container. `boot-workspace` is the blast radius.
-
-### 2.4 Write the Dockerfile
-
-Create `~/boot-src/Dockerfile`:
-
-```dockerfile
-FROM node:22-bookworm-slim
-
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    python3 \
-    python3-pip \
-    python3-venv \
-    git \
-    build-essential \
-    curl \
-    ca-certificates \
-    && apt-get clean && rm -rf /var/lib/apt/lists/*
-
-# Claude Code CLI
-RUN npm install -g @anthropic-ai/claude-code@latest
-
-# node user already exists at UID 1000 in node: images
-RUN mkdir -p /workspace /data /app && chown node:node /workspace /data /app
-
-USER node
-WORKDIR /app
-
-CMD ["bash"]
-```
-
-**Why single-stage (not multi-stage like Phase 2):** The POC needs `build-essential` at
-runtime for `pip install` and `poetry install` inside the container. The production
-Dockerfile in Phase 2 uses multi-stage to remove compilers from the final image.
-
-**Why `node:22-bookworm-slim`**: Debian Bookworm (LTS 2028), glibc (no musl issues),
-Anthropic uses this themselves. `node` user is UID 1000 — matches your host user.
-
-### 2.5 Build and Scan
-
-```bash
-cd ~/boot-src
-docker build -t boot:latest .
-docker inspect boot:latest --format '{{.Id}}'    # record digest
-trivy image boot:latest
-```
-
-Review trivy output. Document any HIGH/CRITICAL CVEs as accepted risk if they're
-in base packages you can't control.
-
-### 2.6 Test Container Lifecycle
-
-This is the critical test — run the container with ALL production flags and verify
-everything works:
-
-```bash
-docker run -d \
-  --name boot-test \
-  --init \
-  --memory=4g \
-  --memory-swap=6g \
-  --cpus=4 \
-  --pids-limit=512 \
-  --user 1000:1000 \
-  --security-opt=no-new-privileges \
-  --cap-drop ALL \
-  --read-only \
-  --tmpfs /tmp:rw,noexec,nosuid,size=512m \
-  --tmpfs /home/node:rw,noexec,nosuid,size=256m \
-  -v ~/boot-workspace:/workspace \
-  -v ~/boot-data:/data \
-  -v ~/boot-src:/app:ro \
-  boot:latest \
-  sleep infinity
-```
-
-**Verify from outside:**
-```bash
-docker inspect boot-test --format '{{.HostConfig.Memory}}'
-# → 4294967296 (4GB in bytes)
-docker inspect boot-test --format '{{.HostConfig.SecurityOpt}}'
-# → [no-new-privileges]
-docker inspect boot-test --format '{{.HostConfig.CapDrop}}'
-# → [ALL]
-docker inspect boot-test --format '{{.HostConfig.ReadonlyRootfs}}'
-# → true
-```
-
-**Verify from inside:**
-```bash
-docker exec boot-test whoami                    # → node
-docker exec boot-test claude --version          # → Claude Code CLI version
-docker exec boot-test python3 --version         # → Python 3.x
-docker exec boot-test ls /var/run/docker.sock   # → No such file
-docker exec boot-test touch /usr/test 2>&1      # → Read-only file system
-docker exec boot-test touch /tmp/test           # → succeeds (tmpfs writable)
-docker exec boot-test curl -s -o /dev/null -w "%{http_code}" https://api.anthropic.com
-# → some HTTP code (proves outbound network works)
-```
-
-Clean up:
-```bash
-docker stop boot-test && docker rm boot-test
-```
-
-### 2.7 Create systemd Unit
-
-Create `/etc/systemd/system/boot-container.service` — the full spec is in
-`phases/02-boot-container.md` section 2.10. Don't start it yet.
-
-```bash
-sudo systemctl daemon-reload
-sudo systemctl enable boot-container.service
-```
-
----
-
-## Step 3: Verify Phase 3 — Tailscale
-
-Most of this is already done by Omarchy. Quick verification pass:
-
-```bash
-systemctl is-active tailscaled              # → active
-tailscale ip -4                             # → 100.x.x.x
-tailscale status                            # → shows your devices
-```
-
-**Verify Tailscale SSH is enabled:**
-```bash
-sudo tailscale up --ssh
-# If already up, this is a no-op
-```
-
-**Verify Funnel is OFF:**
-```bash
-tailscale funnel status
-# → Funnel off / No configuration
-```
-
-**Verify from another device on your tailnet:**
-```bash
-ssh <your-user>@<tailscale-ip>
-# Should work with Tailscale auth (no SSH key needed)
-```
-
-**Verify LAN SSH is blocked:**
-From a non-Tailscale device on the same LAN:
-```bash
-ssh <your-user>@<lan-ip>
-# Should timeout / connection refused
-```
-
-**ACL configuration** — do this in the Tailscale admin console
-(https://login.tailscale.com/admin/acls). The ACL JSON is in
-`phases/03-tailscale-setup.md` section 3.5.
+Remaining from Phase 2: systemd unit creation — deferred to Phase 5.x (no app code yet).
 
 ---
 
@@ -264,12 +41,52 @@ ssh <your-user>@<lan-ip>
 ### 4.1 Create Telegram Bot
 
 If not done yet:
+
 1. Message @BotFather on Telegram → `/newbot`
 2. Choose a name and username
 3. Record the bot token
 4. Message @userinfobot → record your numeric user ID
 
-### 4.2 Create POC Environment File
+### 4.2 Authenticate Claude Code CLI on the Host
+
+The POC uses your Claude subscription (Pro/Max) instead of an API key. The CLI
+authenticates via OAuth in a browser, so this must happen on the host — not inside
+the container.
+
+```bash
+# Install Claude Code CLI on the host if not already present
+npm install -g @anthropic-ai/claude-code@latest
+
+# Authenticate with your Claude subscription
+claude /login
+# Opens a browser → log in with your claude.ai account → authorize
+```
+
+Verify it worked:
+
+```bash
+claude -p "say hello" --dangerously-skip-permissions
+# Should get a response using your subscription
+```
+
+Credentials are stored in `~/.claude/.credentials.json`. These will be mounted into
+the container in Step 5.1.
+
+**Important:** Make sure `ANTHROPIC_API_KEY` is NOT set in your shell environment.
+If set, the CLI silently uses the API key (pay-per-token) instead of your subscription.
+
+```bash
+echo $ANTHROPIC_API_KEY    # should be empty
+```
+
+Create the onboarding bypass file so the CLI doesn't prompt interactively inside the
+container:
+
+```bash
+echo '{"hasCompletedOnboarding": true}' > ~/boot-data/.claude.json
+```
+
+### 4.3 Create POC Environment File
 
 Create `~/boot-data/.env.poc`:
 
@@ -278,11 +95,25 @@ TELEGRAM_BOT_TOKEN=<your-bot-token>
 TELEGRAM_BOT_USERNAME=<your-bot-username>
 APPROVED_DIRECTORY=/workspace
 ALLOWED_USERS=<your-telegram-user-id>
-USE_SDK=true
-ANTHROPIC_API_KEY=<your-api-key>
+USE_SDK=false
 AGENTIC_MODE=true
 DEBUG=true
+DATABASE_URL=sqlite:///data/bot.db
+CLAUDE_MAX_TURNS=10
+CLAUDE_TIMEOUT_SECONDS=300
 ```
+
+**Why `USE_SDK=false`:** The `claude-agent-sdk` Python package (SDK mode) only supports
+API key auth — it cannot use subscription credentials (confirmed by Anthropic, GitHub
+# 5891). CLI subprocess mode (`USE_SDK=false`) invokes the `claude` binary which fully
+supports subscription auth via the mounted OAuth credentials.
+
+**No `ANTHROPIC_API_KEY`:** Intentionally omitted. The CLI will use the subscription
+credentials mounted from `~/.claude/` instead.
+
+**API key alternative:** If you later get an API key, set `USE_SDK=true` and add
+`ANTHROPIC_API_KEY=<your-key>` to use the Python SDK directly. This avoids the CLI
+subprocess overhead and doesn't require mounting credentials.
 
 **Security note**: This file contains secrets. It lives on the `boot-data` volume
 (the accepted blast radius). Don't commit it to git.
@@ -317,17 +148,30 @@ docker run -it \
   --cap-drop ALL \
   -v ~/boot-workspace:/workspace \
   -v ~/boot-data:/data \
+  -v ~/.claude:/home/node/.claude \
+  -v ~/boot-data/.claude.json:/home/node/.claude.json:ro \
   boot:latest \
   bash
 ```
+
+**Credential mounts explained:**
+
+- `~/.claude:/home/node/.claude` — OAuth tokens from `claude /login`. Mounted read-write
+  so the CLI can refresh expired access tokens (they expire every 8-12 hours). Both host
+  and container use UID 1000, so permissions align.
+- `~/boot-data/.claude.json:/home/node/.claude.json:ro` — Onboarding bypass. Prevents the
+  CLI from launching an interactive setup wizard inside the container.
 
 You're now inside the Boot container. Everything below happens inside.
 
 ### 5.2 Install Poetry and Clone the Repo
 
+The bot requires Poetry 2.x (`poetry-core>=2.0.0` build system).
+
 ```bash
-pip3 install --user poetry
+pip3 install --user "poetry>=2.0"
 export PATH="$HOME/.local/bin:$PATH"
+poetry --version    # verify 2.x
 
 cd /workspace
 git clone https://github.com/RichardAtCT/claude-code-telegram.git poc-bot
@@ -336,17 +180,28 @@ cd poc-bot
 
 ### 5.3 Install Dependencies
 
+Note: `--no-dev` is deprecated in Poetry 2.x — use `--without dev`.
+
 ```bash
-poetry install --no-dev
+poetry install --without dev
 ```
 
 If Poetry has issues with the `node` user home directory:
+
 ```bash
 export POETRY_VIRTUALENVS_IN_PROJECT=true
-poetry install --no-dev
+poetry install --without dev
 ```
 
+**Heads up:** The bot has grown since initial planning. It now pulls in `fastapi`,
+`uvicorn`, `apscheduler`, `structlog`, `claude-agent-sdk`, and more. Expect a longer
+install than a minimal bot would need. This is fine — it's a POC, not production.
+
 ### 5.4 Configure and Run
+
+**Auth mode:** With `USE_SDK=false`, the bot spawns `claude` as a subprocess. The CLI
+picks up your subscription credentials from the mounted `~/.claude/` directory. No API
+key needed.
 
 ```bash
 # Load env vars
@@ -355,9 +210,13 @@ export $(grep -v '^#' /data/.env.poc | xargs)
 # Create the approved directory
 mkdir -p /workspace/projects
 
-# Verify Claude Code CLI works with your API key
-ANTHROPIC_API_KEY=$ANTHROPIC_API_KEY claude -p "say hello"
-# Should get a response — proves API access works from inside the container
+# Verify Claude Code CLI works with your subscription (network + auth test)
+claude -p "say hello" --dangerously-skip-permissions
+# Should get a response — proves subscription auth works from inside the container
+# If this fails with auth errors, re-run `claude /login` on the host
+
+# Verify ANTHROPIC_API_KEY is NOT set (would override subscription)
+echo $ANTHROPIC_API_KEY    # should be empty
 
 # Run the bot
 poetry run claude-telegram-bot --debug
@@ -366,6 +225,7 @@ poetry run claude-telegram-bot --debug
 ### 5.5 Test from Telegram
 
 Open Telegram and message your bot:
+
 1. Send "hello" → should get a response
 2. Send "what directory are you in?" → should report `/workspace/projects` or similar
 3. Send "create a file called test.txt with hello world" → should create it
@@ -392,6 +252,7 @@ With the POC running, verify the security boundary is real.
 ### 6.1 Filesystem Isolation
 
 From inside the container:
+
 ```bash
 ls /etc/shadow              # → permission denied (non-root)
 ls /home/<your-username>/        # → no such directory (host fs not visible)
@@ -404,14 +265,15 @@ and the container's own Debian filesystem. Nothing from the host.
 
 ### 6.2 Resource Limits
 
-From inside the container:
+From inside the container (Arch uses cgroup v2 by default):
+
 ```bash
-# Memory limit check
-cat /sys/fs/cgroup/memory.max 2>/dev/null || cat /sys/fs/cgroup/memory/memory.limit_in_bytes
+# Memory limit check (cgroup v2)
+cat /sys/fs/cgroup/memory.max
 # → 4294967296 (4GB)
 
-# PID limit check
-cat /sys/fs/cgroup/pids.max 2>/dev/null || cat /sys/fs/cgroup/pids/pids.max
+# PID limit check (cgroup v2)
+cat /sys/fs/cgroup/pids.max
 # → 512
 ```
 
@@ -426,11 +288,13 @@ sudo ls    # → command not found (no sudo)
 ### 6.4 File Permission Match
 
 From inside the container, create a file:
+
 ```bash
 touch /workspace/permission-test.txt
 ```
 
 From the host, verify ownership:
+
 ```bash
 ls -la ~/boot-workspace/permission-test.txt
 # → should be owned by your user (UID 1000), not root
@@ -441,6 +305,7 @@ This confirms UID 1000 matching works. No permission hell.
 ### 6.5 Network Verification
 
 From inside the container:
+
 ```bash
 # Outbound works (by design)
 curl -s -o /dev/null -w "%{http_code}" https://api.telegram.org
@@ -454,6 +319,7 @@ curl -s -o /dev/null -w "%{http_code}" http://172.17.0.1:53317 2>&1
 ### 6.6 Kill Switch Test
 
 From the host:
+
 ```bash
 docker stop boot-poc
 ```
@@ -473,11 +339,13 @@ docker start boot-poc
 ### 7.1 Docker Daemon Restart (simulates omarchy-update)
 
 With the POC bot running:
+
 ```bash
 sudo systemctl restart docker
 ```
 
 Check:
+
 - Does the container come back? (No — we didn't set `--restart` flag for the POC.
   The systemd unit in production would handle this.)
 - Is SQLite data intact in `~/boot-data/`?
@@ -485,6 +353,7 @@ Check:
 ### 7.2 DNS Breakage Test
 
 With the POC bot running:
+
 1. Disconnect WiFi on the Mac Mini (or toggle the interface)
 2. Reconnect WiFi
 3. From inside the container: `curl https://api.anthropic.com/`
@@ -509,6 +378,7 @@ sudo reboot
 ```
 
 After reboot:
+
 - Is Docker running? (`systemctl is-active docker`)
 - Is Tailscale running? (`tailscale status`)
 - If you had `--restart=unless-stopped` (or the systemd unit), does Boot come back?
@@ -519,15 +389,15 @@ After reboot:
 
 After completing all steps, you have concrete answers to:
 
-| Question | Expected Answer |
-|----------|----------------|
-| Does the container boundary actually isolate? | Yes — can't see host filesystem |
-| Do file permissions work across the boundary? | Yes — UID 1000 matches |
-| Does Claude Code CLI work inside the container? | Yes — API key auth |
-| Does a real Telegram bot work inside the container? | Yes — RichardAtCT's bot runs |
-| What happens on daemon restart? | Container dies, comes back with restart policy |
-| Does DNS break on network change? | Probably yes — need health check |
-| Is the kill switch real? | Yes — `docker stop` kills everything |
+| Question                                            | Expected Answer                                |
+| --------------------------------------------------- | ---------------------------------------------- |
+| Does the container boundary actually isolate?       | Yes — can't see host filesystem                |
+| Do file permissions work across the boundary?       | Yes — UID 1000 matches                         |
+| Does Claude Code CLI work inside the container?     | Yes — subscription auth via mounted credentials |
+| Does a real Telegram bot work inside the container? | Yes — RichardAtCT's bot runs                   |
+| What happens on daemon restart?                     | Container dies, comes back with restart policy |
+| Does DNS break on network change?                   | Probably yes — need health check               |
+| Is the kill switch real?                            | Yes — `docker stop` kills everything           |
 
 **If all answers match expectations**: proceed to `boot/` phases and build your
 own implementation on this validated foundation.
