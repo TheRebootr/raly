@@ -1,0 +1,33 @@
+# Secrets
+.env
+.env.*
+*.key
+*.pem
+credentials.json
+
+# Claude Code
+.claude/
+.claude.json
+
+# Boot runtime (not part of the repo)
+boot-workspace/
+boot-data/
+boot-src/
+
+# OS
+.DS_Store
+*.swp
+*.swo
+*~
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+*.egg-info/
+
+# Node
+node_modules/
+
+# Docker
+*.tar
