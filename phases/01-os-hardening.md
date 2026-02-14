@@ -40,14 +40,6 @@ migrations in the correct sequence:
 omarchy-update
 ```
 
-If kernel updated:
-
-```bash
-sudo reboot
-# Reconnect after reboot, re-verify docker is running:
-docker info
-```
-
 ### 1.2 Firewall (UFW)
 
 UFW and ufw-docker are already installed by Omarchy. This step verifies and locks down
@@ -79,24 +71,13 @@ sudo ufw status verbose
 At this point: all inbound is denied (except existing allow rules like LocalSend),
 all outbound is allowed.
 
+By default, Omarchy has this configured. Double check first.
+
 #### 1.2.4 Verify ufw-docker is in place
 
 Omarchy installs the `ufw-docker` package and configures `/etc/ufw/after.rules`
 automatically. Do NOT manually edit `after.rules` — the package manages it with
 proper rules (private subnet returns, logging deny chain, DNS passthrough).
-
-```bash
-# Verify the rules exist
-ufw-docker status
-# Should show the DOCKER-USER chain rules
-```
-
-If for any reason the rules are missing:
-
-```bash
-sudo ufw-docker install
-sudo ufw reload
-```
 
 ### 1.3 Ensure openssh sshd is disabled
 
@@ -105,8 +86,8 @@ would be an unnecessary attack surface.
 
 ```bash
 # Verify sshd is not running (Omarchy default: disabled)
-sudo systemctl disable sshd 2>/dev/null
-sudo systemctl stop sshd 2>/dev/null
+# sudo systemctl disable sshd 2>/dev/null
+# sudo systemctl stop sshd 2>/dev/null
 systemctl is-enabled sshd
 # Should report: disabled (or not-found)
 ```
@@ -127,6 +108,8 @@ swapon --show
 ```
 
 ### 1.5 Kernel Security Parameters
+
+Note: This is a generic Linux Hardening by Claude. I verify it first on my machine, by default Omarchy has everything configured perfectly so I skipped this
 
 Create `/etc/sysctl.d/99-raly.conf` (Omarchy owns `99-sysctl.conf` — use a
 separate file):
@@ -194,6 +177,8 @@ sysctl kernel.dmesg_restrict kernel.kptr_restrict kernel.yama.ptrace_scope \
 
 ### 1.6 Core Dump Restrictions
 
+Note: I did not do this recommendation. I figure it might mess up my Omarchy updates/system.
+
 Core dumps can leak secrets (Telegram bot token, API keys) from process memory.
 
 Add to `/etc/security/limits.conf`:
@@ -212,6 +197,8 @@ ProcessSizeMax=0
 ```
 
 ### 1.7 Kernel Module Blacklisting
+
+Note: I skip this as well as I use my spare machine as a Desktop sometimes.
 
 Blacklist modules that are unnecessary to reduce kernel attack surface.
 

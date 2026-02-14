@@ -38,6 +38,10 @@ step-by-step implementation specs.
 - Never run Boot's container with `--privileged`.
 - Container user must be UID 1000:1000 (matches host user).
 - Resource limits: `--memory=4g --cpus=4 --pids-limit=512`.
+- Security hardening: `--cap-drop ALL --security-opt=no-new-privileges --read-only`.
+- Tmpfs mounts must use `noexec,nosuid` with size limits.
+- Boot source mounted read-only (`boot-src:/app:ro`).
+- Multi-stage Dockerfile: no compilers (gcc, make) in the runtime image.
 
 ### Things That Will Break If You Set Them
 
@@ -89,7 +93,7 @@ phases/               → This directory — implementation specs (not deployed)
 
 ## Known Operational Concerns
 
-- Docker DNS breaks on host network changes (confirmed Docker bug, no clean fix)
-- Container drift from runtime installs (npm, pip) — need rebuild procedures
+- Docker DNS breaks on host network changes (Omarchy routes via 172.17.0.1 bridge IP)
+- Read-only rootfs blocks runtime installs — deps belong in the Dockerfile, rebuild when changed
 - No AppArmor/SELinux on Arch — Docker seccomp is the only kernel-level MAC
 - Mac Mini 2018 thermal throttling during sustained builds (~20-40% perf loss)

@@ -23,7 +23,7 @@ Remote access: Tailscale SSH (`tailscale up --ssh`) — no openssh sshd.
 | `05.1-security-module.md`      | security.py                        | Phase 4, Phase 5 study | 1 day         | 3       |
 | `05.2-config-module.md`        | config.py                          | Phase 4                | 2 hours       | 4       |
 | `05.3-telegram-handler.md`     | telegram.py                        | Phases 5.1, 5.2        | 4 hours       | 4       |
-| `05.4-claude-executor.md`      | executor.py                        | Phase 5.2              | 3 hours       | 5       |
+| `05.4-claude-executor.md`      | executor.py (subprocess, ~100 LOC) | Phase 5.2              | 2 hours       | 5       |
 | `05.5-session-memory.md`       | session.py, memory.py              | Phase 5.2              | 3 hours       | 5       |
 | `05.6-cron-scheduler.md`       | Health checks + scheduled tasks    | Phase 5.3              | 2 hours       | 6       |
 | `06-verification.md`           | Full Verification                  | All prior phases       | 30 min        | 7       |
@@ -77,15 +77,19 @@ Mac Mini (Omarchy 3.x) ← Tailscale SSH (no openssh sshd)
 
 ```
 Image base: node:22-bookworm-slim (Debian Bookworm, LTS until 2028)
+Build:      Multi-stage (build-essential in build stage only, not in runtime)
 Runtime:    --init (tini, zombie reaping + signal forwarding — NON-NEGOTIABLE)
 Memory:     --memory=4g --memory-swap=6g
 CPU:        --cpus=4 (reserves 2 host cores for desktop)
 PIDs:       --pids-limit=512
-Restart:    --restart=unless-stopped (survives daemon restarts)
 User:       --user 1000:1000 (matches host UID)
+Security:   --cap-drop ALL --security-opt=no-new-privileges --read-only
+Tmpfs:      /tmp (512MB, noexec) + /home/node (256MB, noexec)
 Volumes:    ~/boot-workspace:/workspace (project files — accepted blast radius)
             ~/boot-data:/data (SQLite, config, Claude auth credentials)
+            ~/boot-src:/app:ro (Boot source code — read-only)
 Network:    default bridge (full outbound, no inbound ports needed)
+Lifecycle:  systemd unit (Restart=always), NOT --restart flag
 NOT:        --privileged, Docker socket mount, --network none
 ```
 
@@ -118,23 +122,26 @@ L3:  Sysctl kernel hardening (BPF, ptrace, perf restrictions)
 L4:  Boot container boundary (isolated filesystem, process namespace, cgroups)
 L5:  Container resource limits (4GB RAM, 4 CPUs, 512 PIDs)
 L6:  Container restrictions (no Docker socket, no --privileged, non-root user)
-L7:  Auth middleware + rate limiter + input validation (inside Boot)
-L8:  Telegram allowlist (single numeric ID)
-L9:  Token bucket rate limiter (requests + cost)
-L10: Mounted volumes as explicit blast radius (workspace + data only)
-L11: SQLite audit trail (every action logged)
-L12: 3 Python dependencies (auditable in minutes)
+L7:  Capability + privilege hardening (cap-drop ALL, no-new-privileges)
+L8:  Immutable container (read-only rootfs, noexec tmpfs, source mounted read-only)
+L9:  Multi-stage image (no compilers in runtime — gcc/make removed)
+L10: Auth middleware + input validation (inside Boot)
+L11: Telegram allowlist (single numeric ID)
+L12: Token bucket rate limiter (requests + cost)
+L13: Mounted volumes as explicit blast radius (workspace + data only)
+L14: SQLite audit trail (every action logged)
+L15: 3 Python dependencies (auditable in minutes)
 ```
 
 ## Known Operational Concerns
 
 ```
-DNS breakage:       Docker DNS (127.0.0.11) breaks on host network changes.
-                    Boot must handle DNS errors as transient. May need auto-restart.
-Container drift:    Runtime installs (npm, pip) diverge from Dockerfile.
-                    Keep dependency files on volumes. Have rebuild procedure.
+DNS breakage:       Omarchy routes container DNS through 172.17.0.1 (bridge IP).
+                    Breaks on host network changes. Boot must retry. May need restart.
+Container drift:    Read-only rootfs blocks system-wide installs. Deps belong in
+                    Dockerfile (multi-stage build). Rebuild image when deps change.
 Daemon restarts:    omarchy-update can restart Docker daemon, killing Boot.
-                    --restart=unless-stopped brings it back. Design for crash resilience.
+                    systemd Restart=always brings it back. Design for crash resilience.
 Thermal throttle:   Sustained builds (webpack, cargo) throttle on Mac Mini 2018.
                     Workloads are bursty — chassis recovers between API wait periods.
 No AppArmor:        Arch has no AppArmor/SELinux. Docker seccomp profile is the only MAC.

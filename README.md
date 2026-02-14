@@ -105,14 +105,18 @@ The project is split into two layers:
 
 ```
 Image:      node:22-bookworm-slim + Python 3.12 + Claude Code CLI
+Build:      Multi-stage (no compilers in runtime image)
 Runtime:    --init (zombie reaping — NON-NEGOTIABLE)
 Memory:     --memory=4g --memory-swap=6g
 CPU:        --cpus=4
 PIDs:       --pids-limit=512
-Restart:    --restart=unless-stopped
 User:       --user 1000:1000 (matches host UID)
+Security:   --cap-drop ALL --security-opt=no-new-privileges --read-only
+Tmpfs:      /tmp (512MB, noexec) + /home/node (256MB, noexec)
 Volumes:    ~/boot-workspace:/workspace (projects — blast radius)
             ~/boot-data:/data (SQLite, config, Claude auth)
+            ~/boot-src:/app:ro (source code — read-only)
+Lifecycle:  systemd unit (Restart=always), NOT Docker --restart flag
 NEVER:      --privileged, Docker socket mount
 ```
 
@@ -126,10 +130,13 @@ L3:  Sysctl kernel hardening (BPF, ptrace, perf restrictions)
 L4:  Container boundary (isolated filesystem, process namespace, cgroups)
 L5:  Container resource limits (4GB RAM, 4 CPUs, 512 PIDs)
 L6:  No Docker socket, no --privileged, non-root user
-L7:  Telegram allowlist (single numeric user ID)
-L8:  Token bucket rate limiter
-L9:  Mounted volumes as explicit blast radius
-L10: SQLite audit trail
+L7:  Capability + privilege hardening (cap-drop ALL, no-new-privileges)
+L8:  Immutable container (read-only rootfs, noexec tmpfs, source read-only)
+L9:  Multi-stage image (no compilers in runtime)
+L10: Telegram allowlist (single numeric user ID)
+L11: Token bucket rate limiter
+L12: Mounted volumes as explicit blast radius
+L13: SQLite audit trail
 ```
 
 ## Known Operational Concerns
@@ -137,8 +144,8 @@ L10: SQLite audit trail
 | Concern                                 | Impact                                   | Mitigation                                               |
 | --------------------------------------- | ---------------------------------------- | -------------------------------------------------------- |
 | Docker DNS breaks on network change     | Bot loses API access                     | Health check + auto-restart                              |
-| Container drift from runtime installs   | Dockerfile diverges from reality         | Keep deps on volumes, periodic rebuild                   |
-| `omarchy-update` restarts Docker daemon | Container dies                           | `--restart=unless-stopped` + crash-resilient design      |
+| Container drift from runtime installs   | Read-only rootfs blocks system installs  | Deps in Dockerfile (multi-stage build), rebuild when changed |
+| `omarchy-update` restarts Docker daemon | Container dies                           | systemd `Restart=always` + crash-resilient design        |
 | No AppArmor/SELinux on Arch             | Fewer kernel-level restrictions          | Accepted trade-off, Docker seccomp still active          |
 | Mac Mini 2018 thermal throttling        | 20-40% perf loss during sustained builds | Workloads are bursty, chassis recovers between API waits |
 

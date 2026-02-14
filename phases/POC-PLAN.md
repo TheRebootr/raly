@@ -161,6 +161,11 @@ docker run -d \
   --cpus=4 \
   --pids-limit=512 \
   --user 1000:1000 \
+  --security-opt=no-new-privileges \
+  --cap-drop ALL \
+  --read-only \
+  --tmpfs /tmp:rw,noexec,nosuid,size=512m \
+  --tmpfs /home/node:rw,noexec,nosuid,size=256m \
   -v ~/boot-workspace:/workspace \
   -v ~/boot-data:/data \
   boot:latest \
@@ -171,6 +176,12 @@ docker run -d \
 ```bash
 docker inspect boot-test --format '{{.HostConfig.Memory}}'
 # → 4294967296 (4GB in bytes)
+docker inspect boot-test --format '{{.HostConfig.SecurityOpt}}'
+# → [no-new-privileges]
+docker inspect boot-test --format '{{.HostConfig.CapDrop}}'
+# → [ALL]
+docker inspect boot-test --format '{{.HostConfig.ReadonlyRootfs}}'
+# → true
 ```
 
 **Verify from inside:**
@@ -179,6 +190,8 @@ docker exec boot-test whoami                    # → node
 docker exec boot-test claude --version          # → Claude Code CLI version
 docker exec boot-test python3 --version         # → Python 3.x
 docker exec boot-test ls /var/run/docker.sock   # → No such file
+docker exec boot-test touch /usr/test 2>&1      # → Read-only file system
+docker exec boot-test touch /tmp/test           # → succeeds (tmpfs writable)
 docker exec boot-test curl -s -o /dev/null -w "%{http_code}" https://api.anthropic.com
 # → some HTTP code (proves outbound network works)
 ```
@@ -191,7 +204,7 @@ docker stop boot-test && docker rm boot-test
 ### 2.7 Create systemd Unit
 
 Create `/etc/systemd/system/boot-container.service` — the full spec is in
-`phases/02-boot-container.md` section 2.9. Don't start it yet.
+`phases/02-boot-container.md` section 2.10. Don't start it yet.
 
 ```bash
 sudo systemctl daemon-reload
@@ -281,6 +294,11 @@ This is where we prove the architecture works.
 
 ### 5.1 Start the Container
 
+**Note:** The POC container intentionally omits `--read-only` and `noexec` tmpfs flags
+because it needs interactive package installation (pip, poetry, git clone). Production
+uses the full hardened flags from Phase 2 (`--read-only`, `--cap-drop ALL`,
+`noexec` tmpfs, etc.). The boundary test in Step 2.6 already validated those flags.
+
 ```bash
 docker run -it \
   --name boot-poc \
@@ -290,6 +308,8 @@ docker run -it \
   --cpus=4 \
   --pids-limit=512 \
   --user 1000:1000 \
+  --security-opt=no-new-privileges \
+  --cap-drop ALL \
   -v ~/boot-workspace:/workspace \
   -v ~/boot-data:/data \
   boot:latest \

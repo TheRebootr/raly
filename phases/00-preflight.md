@@ -16,15 +16,9 @@ expected state before any hardening begins.
 
 ## Steps
 
-### 0.1 Verify Omarchy Version
+### 0.1 Verify Omarchy Version up to date
 
-```bash
-cat /etc/omarchy-version
-# Alternative: check for omarchy markers
-ls /etc/omarchy* 2>/dev/null || echo "No omarchy version file found"
-```
-
-Record the exact version. This is the baseline.
+Check and apply for update in launcher.
 
 ### 0.2 Verify Docker
 
@@ -59,9 +53,6 @@ If WiFi is unstable, strongly prefer Ethernet for server use. Note the interface
 ```bash
 df -h
 ```
-
-Need at least 20GB free for Docker images, workspace, and logs.
-If low, identify what's consuming space before proceeding.
 
 ### 0.6 Verify Docker Group Membership
 
@@ -114,7 +105,7 @@ Verify: 32GB RAM, 6-core i5. These numbers inform Boot container resource limits
 
 ## Verification Checklist
 
-- [x] Omarchy version recorded
+- [x] Omarchy up to date
 - [x] Docker daemon running, `docker info` succeeds
 - [x] Docker Compose v2+ available
 - [x] Internet connectivity confirmed (both IP and DNS)
