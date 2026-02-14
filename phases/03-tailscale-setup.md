@@ -38,6 +38,13 @@ systemctl is-active tailscaled     # → active
 tailscale version
 ```
 
+Also verify the TUN kernel module is loaded (tailscaled crash-loops without it):
+
+```bash
+lsmod | grep tun
+# Should show "tun" — if missing: sudo modprobe tun
+```
+
 ### 3.2 Authenticate and Enable SSH
 
 ```bash
@@ -62,15 +69,24 @@ Record the Tailscale IP. This is how you'll access the machine remotely.
 
 ### 3.4 Enable MagicDNS (optional but recommended)
 
-In the Tailscale admin console (https://login.tailscale.com/admin):
+In the Tailscale admin console (<https://login.tailscale.com/admin>):
+
 - Enable MagicDNS
 - Your Mac Mini will be reachable as `<hostname>.<tailnet-name>.ts.net`
 
 ### 3.5 Configure Tailscale ACLs
 
-In the Tailscale admin console (https://login.tailscale.com/admin/acls):
+In the Tailscale admin console (<https://login.tailscale.com/admin/acls>):
 
-Set up ACLs so only YOUR devices can reach the Mac Mini:
+Replace the default "allow all" policy. Tailscale has **two independent permission layers**
+that both must pass for a connection to succeed:
+
+1. **Network ACLs** (`acls`) — controls raw IP+port connectivity between devices
+2. **SSH ACLs** (`ssh`) — controls who can Tailscale SSH into what, as which user
+
+Even if the network ACL allows `*:*`, SSH is denied unless a matching `ssh` rule also exists.
+An intruder who joins your tailnet would match neither `autogroup:owner` nor `autogroup:self`,
+so they get **zero** access — no network connectivity and no SSH.
 
 ```json
 {
@@ -92,10 +108,17 @@ Set up ACLs so only YOUR devices can reach the Mac Mini:
 }
 ```
 
-This allows:
-- Only owner devices to reach any device in the tailnet
-- SSH only as non-root users (no root login)
-- Adjust if you have shared tailnet members
+What this achieves:
+
+- **Network**: Only owner devices can reach any device — general connectivity preserved
+  (file sharing, LocalSend, etc.)
+- **SSH**: Only owner can SSH, only into their own devices, only as non-root (sudo after)
+- **Intruder with tailnet access**: No ACL rules match them → blocked from everything
+- **Blast radius**: Even a compromised device token cannot SSH without owner identity
+
+Do NOT tag the Mac Mini (e.g., `tag:server`). Tags strip user identity from a device,
+removing it from `autogroup:self` and breaking the SSH rule above. Tags are for multi-user
+tailnets with role-based access — unnecessary for a single-owner tailnet.
 
 ### 3.6 Verify Tailscale Funnel is OFF
 
@@ -130,6 +153,7 @@ If there are any rules allowing port 22 (SSH), remove them:
 ```
 
 The only allow rule should be LocalSend (53317) if you use it.
+On Omarchy the docker-dns is also allowed
 
 ### 3.8 Verify openssh sshd is Still Disabled
 
@@ -181,7 +205,34 @@ nmap -Pn <lan-ip>
 # All ports should be filtered/closed (except 53317 LocalSend if enabled)
 ```
 
-### 3.10 Verify Tailscale Starts on Boot
+### 3.10 Check for NetworkManager Conflict
+
+If Omarchy uses NetworkManager, it may fight tailscaled over the `tailscale0` interface.
+Check and fix if needed:
+
+```bash
+# Check if NetworkManager is managing tailscale0:
+nmcli device status | grep tailscale
+# If it shows "connected" or "managed", create a drop-in to exclude it:
+```
+
+If managed, create `/etc/NetworkManager/conf.d/99-tailscale.conf`:
+
+```ini
+[keyfile]
+unmanaged-devices=interface-name:tailscale0
+```
+
+Then restart both services:
+
+```bash
+sudo systemctl restart NetworkManager
+sudo systemctl restart tailscaled
+```
+
+Skip this step if Omarchy does not use NetworkManager or if `tailscale0` is already unmanaged.
+
+### 3.11 Verify Tailscale Starts on Boot
 
 ```bash
 systemctl is-enabled tailscaled
@@ -198,18 +249,22 @@ ssh user@<tailscale-ip>
 
 ## Verification Checklist
 
-- [ ] `tailscaled` service enabled and active (Omarchy default)
-- [ ] Mac Mini authenticated and appearing in Tailscale admin console
-- [ ] Tailscale SSH enabled (`tailscale up --ssh`)
-- [ ] Tailscale IP (100.x.x.x) recorded
-- [ ] MagicDNS enabled (optional)
-- [ ] Tailscale ACLs restrict access to owner devices only
-- [ ] Tailscale Funnel is OFF
-- [ ] No UFW rules for port 22 (not needed with Tailscale SSH)
-- [ ] openssh sshd confirmed disabled
-- [ ] SSH via Tailscale IP: WORKS (Tailscale auth, no SSH keys)
-- [ ] SSH via LAN IP: FAILS (no sshd, UFW blocks)
-- [ ] Tailscale survives reboot
+- [x] TUN kernel module loaded (`lsmod | grep tun`)
+- [x] `tailscaled` service enabled and active (Omarchy default)
+- [x] Mac Mini authenticated and appearing in Tailscale admin console
+- [x] Tailscale SSH enabled (`tailscale up --ssh`)
+- [x] Tailscale IP (100.x.x.x) recorded
+- [x] MagicDNS enabled (optional)
+- [x] Tailscale ACLs: network restricted to `autogroup:owner`
+- [x] Tailscale ACLs: SSH restricted to `autogroup:owner` → `autogroup:self`, non-root only
+- [x] Mac Mini is NOT tagged (no `--advertise-tags`)
+- [x] Tailscale Funnel is OFF
+- [x] No UFW rules for port 22 (not needed with Tailscale SSH)
+- [x] openssh sshd confirmed disabled
+- [x] NetworkManager not managing `tailscale0` (if applicable)
+- [x] SSH via Tailscale IP: WORKS (Tailscale auth, no SSH keys)
+- [x] SSH via LAN IP: FAILS (no sshd, UFW blocks)
+- [x] Tailscale survives reboot
 
 ## Outputs for Downstream Phases
 
@@ -220,6 +275,7 @@ ssh user@<tailscale-ip>
 ## Rollback
 
 If locked out via Tailscale:
+
 1. Physical access to Mac Mini (monitor + keyboard)
 2. Login at physical console
 3. Check Tailscale: `tailscale status`
@@ -227,19 +283,32 @@ If locked out via Tailscale:
 5. Re-authenticate if needed: `sudo tailscale up --ssh`
 
 If Tailscale service fails:
+
 1. Physical access
 2. `sudo systemctl status tailscaled` to diagnose
 3. `journalctl -u tailscaled -n 50` for logs
 
+## Operational Notes
+
+- **Package updates**: When `omarchy-update` updates the `tailscale` package, the running
+  `tailscaled` keeps the old binary. It does NOT auto-restart. After an update, restart
+  manually: `sudo systemctl restart tailscaled`. Consider adding this to Phase 7 (ops).
+- **DNS interaction**: Tailscale expects `systemd-resolved` for MagicDNS. If Omarchy uses
+  a different resolver, Tailscale may overwrite `/etc/resolv.conf`, which can break DNS
+  for the Boot container (Docker routes DNS via 172.17.0.1). Verify with `resolvectl status`
+  after enabling MagicDNS.
+
 ## Internet Validation Instruction
 
 Before executing this phase, perform a web search for:
+
 - "Tailscale SSH setup Arch Linux 2025 2026"
 - "Tailscale ACL configuration best practices"
 - "Tailscale Funnel disable verification"
 - "Tailscale MagicDNS setup"
 
 Verify that:
+
 1. `tailscale up --ssh` is still the correct command for enabling Tailscale SSH
 2. The ACL syntax hasn't changed in recent Tailscale versions
 3. Tailscale SSH auth flow is as described (no SSH keys)
