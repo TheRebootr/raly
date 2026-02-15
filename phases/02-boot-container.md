@@ -335,14 +335,12 @@ docker run -d \
   --user 1000:1000 \
   --security-opt=no-new-privileges \
   --cap-drop ALL \
-  --read-only \
-  --tmpfs /tmp:rw,noexec,nosuid,size=512m \
-  --tmpfs /home/node:rw,noexec,nosuid,size=256m \
   -v ~/boot-workspace:/workspace \
   -v ~/boot-data:/data \
   -v ~/boot-src:/app:ro \
   boot:latest \
   sleep infinity
+  # Optional: add --read-only for locked-down deployments (see "Container Security Model")
 
 # Verify it's running
 docker ps --filter name=boot-test
@@ -442,14 +440,12 @@ ExecStart=/usr/bin/docker run \
   --user 1000:1000 \
   --security-opt=no-new-privileges \
   --cap-drop ALL \
-  --read-only \
-  --tmpfs /tmp:rw,noexec,nosuid,size=512m \
-  --tmpfs /home/node:rw,noexec,nosuid,size=256m \
   -v /home/YOUR_USER/boot-workspace:/workspace \
   -v /home/YOUR_USER/boot-data:/data \
   -v /home/YOUR_USER/boot-src:/app:ro \
   boot:latest \
   python3 /app/boot/main.py
+  # Optional: add --read-only + tmpfs mounts for locked-down deployments (see below)
 
 ExecStop=/usr/bin/docker stop -t 30 boot
 
@@ -463,9 +459,7 @@ WantedBy=multi-user.target
 - `boot-src:/app:ro` — Boot's source code is mounted read-only. The container cannot
   modify its own harness code. If you want Claude Code to edit Boot's source (self-modification),
   remove `:ro` — but understand the implication: the AI can rewrite its own control harness.
-- `--read-only` makes the container rootfs immutable. Only `/tmp` (512MB), `/home/node`
-  (256MB), and the mounted volumes are writable. Both tmpfs mounts are `noexec` — no
-  binary payloads can be executed from them even if written there.
+- `--read-only` is optional. See "Container Security Model" below for when to use it.
 - In production, the code would be COPYed into the image and the `boot-src` mount removed.
 
 Enable but do NOT start yet (Boot application code doesn't exist until Phase 5.x):
@@ -496,9 +490,6 @@ Boot's container runs with these constraints:
 | `--user 1000:1000`    | Non-root              | Matches host UID, no privilege inside                      |
 | `--no-new-privileges` | Security option       | Blocks setuid/setgid privilege escalation                  |
 | `--cap-drop ALL`      | Drop all capabilities | No Linux capabilities (NET_RAW, MKNOD, etc.)               |
-| `--read-only`         | Immutable rootfs      | Container filesystem cannot be modified                    |
-| `--tmpfs /tmp`        | 512MB, noexec, nosuid | Scratch space, no executable payloads, lost on restart     |
-| `--tmpfs /home/node`  | 256MB, noexec, nosuid | User home scratch, no executable payloads, lost on restart |
 | Volumes               | workspace + data only | Blast radius is these two directories                      |
 | `boot-src:/app:ro`    | Read-only source      | Boot cannot modify its own harness code                    |
 | Network               | Default bridge        | Full outbound (needed for Anthropic API, package installs) |
@@ -508,9 +499,7 @@ Boot's container runs with these constraints:
 - Access the Docker socket (not mounted)
 - Access host filesystem outside mounted volumes
 - Escalate to root (no sudo, non-root user, no-new-privileges, all caps dropped)
-- Modify its own binaries or rootfs (read-only filesystem)
 - Modify its own harness source code (boot-src mounted read-only)
-- Execute binaries dropped into /tmp or /home/node (noexec on tmpfs)
 - Use raw sockets, mknod, or any Linux capability (all dropped)
 - Consume more than 4GB RAM / 4 CPUs
 - Survive `docker stop boot` (kill switch)
@@ -548,17 +537,35 @@ If your threat model requires credential/state separation, split `~/boot-data` i
 
 ### Container drift
 
-With `--read-only` and `noexec` on tmpfs, runtime `npm install -g` / `pip install` to
-system paths will fail, and executables written to /tmp cannot run. This is by design.
+Without `--read-only`, the agent can install packages at runtime (`pip install`,
+`npm install -g`, `apt-get install`). These installs are ephemeral — they're lost
+when the container is recreated from the image. This is acceptable for agentic use
+where the assistant installs tools on demand.
 
-All persistent dependencies belong in the Dockerfile:
+For persistent dependencies, add them to the Dockerfile and rebuild the image:
 
 - npm packages → installed globally in the build stage, copied to runtime
 - Python packages → installed into `/opt/boot-venv` in the build stage, copied to runtime
 - When deps change → rebuild the image (`docker build`), restart the container
 
-User-local installs to /workspace are still possible (e.g. `npm install` in a project
-directory), but these are scoped to the workspace volume, not system-wide.
+### Optional: `--read-only` mode
+
+For locked-down deployments where no runtime installs are allowed, add these flags:
+
+```
+--read-only \
+--tmpfs /tmp:rw,noexec,nosuid,size=512m \
+--tmpfs /home/node:rw,noexec,nosuid,size=256m
+```
+
+**What `--read-only` does:** Makes the container's entire root filesystem immutable.
+The container sees the Debian image contents (binaries, libraries, config) but cannot
+modify them. Only explicitly mounted volumes and tmpfs paths are writable. Combined with
+`noexec` on tmpfs, this also prevents executing any binaries dropped into scratch space.
+
+**When to use it:** Non-agentic workloads where all dependencies are known ahead of time
+and baked into the image. Not practical for LLM agents that need to install packages,
+linters, or CLI tools at the user's request.
 
 ### DNS breakage
 
@@ -616,9 +623,10 @@ brings it back. Boot's application must be crash-resilient (SQLite state trackin
 | Modify `daemon.json`                               | Omarchy owns it. Never touch.                                               |
 | Phase 5.7 (Dockerfile.sandbox)                     | Merged into this phase. The Boot container IS the sandbox.                  |
 
-**Clarification:** `--cap-drop ALL`, `--security-opt=no-new-privileges`, and `--read-only`
-were previously specified for ephemeral sub-containers. They are now applied to Boot's own
-container — the security properties are the same, just applied at the right level.
+**Clarification:** `--cap-drop ALL` and `--security-opt=no-new-privileges` were previously
+specified for ephemeral sub-containers. They are now applied to Boot's own container — the
+security properties are the same, just applied at the right level. `--read-only` is now
+optional (see "Container drift" section above).
 
 ## Internet Validation Instruction
 

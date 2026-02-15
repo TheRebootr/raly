@@ -80,11 +80,31 @@ echo $ANTHROPIC_API_KEY    # should be empty
 ```
 
 Create the onboarding bypass file so the CLI doesn't prompt interactively inside the
-container:
+container. Every key pre-answers an interactive dialog that would hang in a non-interactive
+context:
 
 ```bash
-echo '{"hasCompletedOnboarding": true}' > ~/boot-data/.claude.json
+cat > ~/boot-data/.claude.json << 'EOF'
+{
+  "hasCompletedOnboarding": true,
+  "hasAcknowledgedDangerousPermissions": true,
+  "hasTrustDialogAccepted": true,
+  "hasCompletedProjectOnboarding": true,
+  "shiftEnterKeyBindingInstalled": true
+}
+EOF
 ```
+
+The `--dangerously-skip-permissions` flag requires a separate setting in `settings.json`
+(not `.claude.json`) — without it the CLI silently hangs waiting for interactive acceptance
+([#25503](https://github.com/anthropics/claude-code/issues/25503)):
+
+```bash
+echo '{"skipDangerousModePermissionPrompt": true}' > ~/.claude/settings.json
+```
+
+Since `~/.claude/` is bind-mounted rw into the container, this file will be visible at
+`/home/node/.claude/settings.json`.
 
 ### 4.3 Create POC Environment File
 
@@ -98,14 +118,16 @@ ALLOWED_USERS=<your-telegram-user-id>
 USE_SDK=false
 AGENTIC_MODE=true
 DEBUG=true
-DATABASE_URL=sqlite:///data/bot.db
+DATABASE_URL=sqlite:////data/bot.db
 CLAUDE_MAX_TURNS=10
 CLAUDE_TIMEOUT_SECONDS=300
 ```
 
 **Why `USE_SDK=false`:** The `claude-agent-sdk` Python package (SDK mode) only supports
 API key auth — it cannot use subscription credentials (confirmed by Anthropic, GitHub
+
 # 5891). CLI subprocess mode (`USE_SDK=false`) invokes the `claude` binary which fully
+
 supports subscription auth via the mounted OAuth credentials.
 
 **No `ANTHROPIC_API_KEY`:** Intentionally omitted. The CLI will use the subscription
@@ -130,10 +152,9 @@ This is where we prove the architecture works.
 
 ### 5.1 Start the Container
 
-**Note:** The POC container intentionally omits `--read-only` and `noexec` tmpfs flags
-because it needs interactive package installation (pip, poetry, git clone). Production
-uses the full hardened flags from Phase 2 (`--read-only`, `--cap-drop ALL`,
-`noexec` tmpfs, etc.). The boundary test in Step 2.6 already validated those flags.
+**Note:** `--read-only` is not used here (or in default production config) because agentic
+use cases need runtime package installation. It's available as an optional hardening flag
+for locked-down deployments — see Phase 2, "Optional: `--read-only` mode".
 
 ```bash
 docker run -it \
@@ -149,7 +170,7 @@ docker run -it \
   -v ~/boot-workspace:/workspace \
   -v ~/boot-data:/data \
   -v ~/.claude:/home/node/.claude \
-  -v ~/boot-data/.claude.json:/home/node/.claude.json:ro \
+  -v ~/boot-data/.claude.json:/home/node/.claude.json \
   boot:latest \
   bash
 ```
@@ -159,8 +180,9 @@ docker run -it \
 - `~/.claude:/home/node/.claude` — OAuth tokens from `claude /login`. Mounted read-write
   so the CLI can refresh expired access tokens (they expire every 8-12 hours). Both host
   and container use UID 1000, so permissions align.
-- `~/boot-data/.claude.json:/home/node/.claude.json:ro` — Onboarding bypass. Prevents the
-  CLI from launching an interactive setup wizard inside the container.
+- `~/boot-data/.claude.json:/home/node/.claude.json` — Global state (onboarding bypass,
+  startup counters, etc.). Must be **read-write** — the CLI writes to this file at startup
+  and silently hangs if it can't.
 
 You're now inside the Boot container. Everything below happens inside.
 
@@ -168,8 +190,12 @@ You're now inside the Boot container. Everything below happens inside.
 
 The bot requires Poetry 2.x (`poetry-core>=2.0.0` build system).
 
+**Why not pip?** The `boot:latest` image has a Python venv on PATH (`/opt/boot-venv/bin`),
+and venv pip rejects `--user` installs. System pip isn't in the runtime image either. The
+official Poetry installer works cleanly — it only needs `python3` and `curl`.
+
 ```bash
-pip3 install --user "poetry>=2.0"
+curl -sSL https://install.python-poetry.org | python3 -
 export PATH="$HOME/.local/bin:$PATH"
 poetry --version    # verify 2.x
 
@@ -247,45 +273,135 @@ docker exec -d boot-poc bash -c 'cd /workspace/poc-bot && export $(grep -v "^#" 
 
 ## Step 6: Boundary Testing
 
-With the POC running, verify the security boundary is real.
+With the POC running, verify the security boundary is real. Each test maps to a
+specific container flag or architectural decision from Phase 2/CLAUDE.md.
 
 ### 6.1 Filesystem Isolation
+
+Tests: container can't see host filesystem. Only `/workspace` and `/data` (bind mounts)
+plus the container's own Debian filesystem are visible.
 
 From inside the container:
 
 ```bash
-ls /etc/shadow              # → permission denied (non-root)
-ls /home/<your-username>/        # → no such directory (host fs not visible)
-cat /etc/hostname           # → container ID, not host hostname
-ls /var/run/docker.sock     # → no such file
+# Container's /etc/shadow exists but is unreadable as non-root
+# NOTE: `ls` will succeed (it only needs directory permission on /etc/).
+# The real test is reading the file:
+cat /etc/shadow             # → Permission denied
+cat /etc/hostname           # → container ID (e.g. "a1b2c3d4e5f6"), not host hostname
+
+# Host filesystem is invisible
+ls /home/therebootr/        # → No such file or directory
+ls /var/run/docker.sock     # → No such file or directory
+
+# Only mounted volumes show host content
+ls /workspace               # → your project files from ~/boot-workspace
+ls /data                    # → config/SQLite from ~/boot-data
 ```
 
-**The container can only see**: `/workspace` (your projects), `/data` (config/SQLite),
-and the container's own Debian filesystem. Nothing from the host.
+**Why this matters:** The container's `/etc/shadow` is the _image's_ shadow file (Debian
+system accounts), not the host's. The host filesystem is completely invisible — this is
+the core isolation guarantee.
 
-### 6.2 Resource Limits
+### 6.2 Privilege & Capability Restrictions
+
+Tests: `--cap-drop ALL`, `--security-opt=no-new-privileges`, no root access.
+
+```bash
+# User verification
+whoami                      # → node
+id                          # → uid=1000(node) gid=1000(node)
+sudo ls                     # → command not found (no sudo in image)
+
+# --cap-drop ALL: no Linux capabilities at all
+# These all require capabilities that have been dropped:
+mount -t tmpfs none /tmp    # → permission denied (needs CAP_SYS_ADMIN)
+ip link set lo down         # → permission denied (needs CAP_NET_ADMIN)
+mknod /dev/null2 c 1 3     # → permission denied (needs CAP_MKNOD)
+chown root /workspace       # → permission denied (needs CAP_CHOWN)
+
+# --security-opt=no-new-privileges: setuid/setgid binaries can't escalate
+# Even if a setuid binary existed, it couldn't gain privileges.
+# Verify the flag is active:
+grep NoNewPrivs /proc/self/status
+# → NoNewPrivs: 1
+```
+
+**What --cap-drop ALL means:** Linux capabilities are fine-grained root powers (mount
+filesystems, change network config, load kernel modules, etc.). Dropping all of them
+means the container process has zero elevated permissions, even if it somehow became
+UID 0.
+
+### 6.3 Init Process (--init)
+
+Tests: PID 1 is tini (Docker's init), not your shell. Without `--init`, your shell
+becomes PID 1 and can't reap zombie processes — Claude Code CLI spawns subprocesses
+that would accumulate as zombies over time.
+
+```bash
+cat /proc/1/comm
+# → "docker-init" (Docker's bundled tini), NOT "bash"
+# The slim image has no `ps` command — /proc/1/comm is the direct way to check.
+```
+
+### 6.4 Resource Limits
+
+Tests: `--memory=4g`, `--memory-swap=6g`, `--cpus=4`, `--pids-limit=512`.
 
 From inside the container (Arch uses cgroup v2 by default):
 
 ```bash
-# Memory limit check (cgroup v2)
+# Memory limit (cgroup v2)
 cat /sys/fs/cgroup/memory.max
 # → 4294967296 (4GB)
 
-# PID limit check (cgroup v2)
+# Swap limit = memory-swap minus memory = 2GB swap
+cat /sys/fs/cgroup/memory.swap.max
+# → 2147483648 (2GB)
+
+# PID limit (cgroup v2)
 cat /sys/fs/cgroup/pids.max
 # → 512
+
+# CPU limit (cgroup v2): --cpus=4 → 400000 per 100000 period
+cat /sys/fs/cgroup/cpu.max
+# → 400000 100000
 ```
 
-### 6.3 User Verification
+### 6.5 Volume Scope (Blast Radius)
+
+Tests: the container can only write to `/workspace` and `/data`. These are the accepted
+blast radius — if compromised, only these directories are affected.
+
+From inside the container:
 
 ```bash
-whoami     # → node
-id         # → uid=1000(node) gid=1000(node)
-sudo ls    # → command not found (no sudo)
+# Can write to mounted volumes
+touch /workspace/scope-test.txt   # → succeeds
+touch /data/scope-test.txt        # → succeeds
+
+# Can write to container filesystem (--read-only is not used by default)
+# This is expected — agents need to install packages at runtime.
+# If using optional --read-only mode, this would fail.
+touch /opt/test.txt               # → succeeds (writable rootfs)
 ```
 
-### 6.4 File Permission Match
+From the host — verify only the expected directories are affected:
+
+```bash
+ls ~/boot-workspace/scope-test.txt    # → exists, owned by UID 1000
+ls ~/boot-data/scope-test.txt         # → exists, owned by UID 1000
+
+# Credential mount is read-write (needed for token refresh)
+ls -la ~/.claude/                     # → confirm files not unexpectedly modified
+```
+
+**Volume scope is the blast radius:** Even without `--read-only`, the container boundary
+still isolates. The accepted blast radius is `/workspace` + `/data` (bind mounts) plus
+the ephemeral container filesystem (lost on recreation). Host files outside these mounts
+are invisible.
+
+### 6.6 File Permission Match
 
 From inside the container, create a file:
 
@@ -300,23 +416,57 @@ ls -la ~/boot-workspace/permission-test.txt
 # → should be owned by your user (UID 1000), not root
 ```
 
-This confirms UID 1000 matching works. No permission hell.
+This confirms UID 1000 matching works. No permission hell between host and container.
 
-### 6.5 Network Verification
+### 6.7 Network Verification
+
+Tests: full outbound access (by design), no inbound exposure, no listening services.
+
+**How container networking works here:** Docker's default bridge gives the container its
+own network namespace with a private IP (172.17.0.x). Outbound connections work via NAT.
+Inbound connections from the external network require explicit `-p` port mapping — which
+we don't use. There is no firewall or sshd inside the container (the slim image doesn't
+ship them, and `--cap-drop ALL` prevents installing firewall rules anyway).
 
 From inside the container:
 
 ```bash
-# Outbound works (by design)
+# Outbound works (required for Telegram + Anthropic APIs)
 curl -s -o /dev/null -w "%{http_code}" https://api.telegram.org
+# → 200 or 301
 curl -s -o /dev/null -w "%{http_code}" https://api.anthropic.com
+# → 200 or 403 (no auth header, but DNS + TLS works)
 
-# Can the container reach the host? (document the result)
-curl -s -o /dev/null -w "%{http_code}" http://172.17.0.1:53317 2>&1
-# host bridge IP, LocalSend port — may or may not work depending on UFW
+# Verify no services are listening inside the container
+# (slim image has no ss/netstat — read /proc/net directly)
+cat /proc/net/tcp /proc/net/tcp6 2>/dev/null
+# → only the header line, or connections YOUR bot opened (outbound to Telegram)
+# → no entries in LISTEN state (0A in the "st" column = LISTEN)
+# If the bot is running, you'll see ESTABLISHED connections (01) — that's expected.
+
+# No sshd, no firewall — verify the tools don't exist
+which sshd                  # → not found (not in the image)
+which iptables              # → not found (not in the image)
+which ufw                   # → not found (not in the image)
+
+# Can the container reach the host? (document, don't fix)
+curl -s --connect-timeout 3 -o /dev/null -w "%{http_code}" http://172.17.0.1:53317
+# host bridge IP, LocalSend port — result depends on host UFW rules
 ```
 
-### 6.6 Kill Switch Test
+From the host — verify no ports are published:
+
+```bash
+docker port boot-poc
+# → should be empty (no -p flags were used)
+```
+
+**No inbound exposure by design:** No `-p` flags = no port mappings. The bot communicates
+purely via outbound long-polling to the Telegram API. Even if a process inside the
+container listens on a port, it's only reachable from the host via the container's
+bridge IP — not from the external network.
+
+### 6.8 Kill Switch Test
 
 From the host:
 
@@ -329,59 +479,97 @@ container is frozen. No processes survive on the host.
 
 ```bash
 docker start boot-poc
-# Bot should come back (if you set up auto-restart for the bot process)
+# Container restarts, but the bot process does NOT auto-start.
+# This is expected — the POC runs the bot interactively.
+# You need to exec in and restart it manually:
+docker exec -it boot-poc bash
+# then re-run the bot startup commands from Step 5.4
 ```
+
+**Production difference:** The systemd unit + container entrypoint will handle
+auto-restart. The POC validates the kill switch, not the recovery.
 
 ---
 
 ## Step 7: Stress Testing
 
+These tests verify the architecture survives real-world disruptions. Run them with
+the POC bot actively responding to Telegram messages.
+
 ### 7.1 Docker Daemon Restart (simulates omarchy-update)
 
-With the POC bot running:
+`omarchy-update` runs pacman which may restart the Docker daemon. Verify data survives.
 
 ```bash
+# Send a message to the bot, confirm it's responding
 sudo systemctl restart docker
 ```
 
 Check:
 
-- Does the container come back? (No — we didn't set `--restart` flag for the POC.
-  The systemd unit in production would handle this.)
-- Is SQLite data intact in `~/boot-data/`?
+- Container status: `docker ps -a --filter name=boot-poc`
+  (Expected: Exited — no `--restart` flag in POC)
+- Is SQLite data intact? `ls -la ~/boot-data/bot.db`
+- Manual recovery: `docker start boot-poc && docker exec -it boot-poc bash`
+  then re-run bot startup from Step 5.4
 
 ### 7.2 DNS Breakage Test
 
+Docker's embedded DNS can break when the host network changes. This is a known issue
+on this machine (see CLAUDE.md: "Docker DNS breaks on host network changes").
+
 With the POC bot running:
 
-1. Disconnect WiFi on the Mac Mini (or toggle the interface)
-2. Reconnect WiFi
-3. From inside the container: `curl https://api.anthropic.com/`
-4. Does DNS resolve? If not, this confirms the Docker DNS bug.
-5. Restart the container: `docker restart boot-poc`
-6. Does DNS work after container restart?
+1. Toggle the network interface on the Mac Mini (disconnect/reconnect WiFi or Ethernet)
+2. From inside the container: `curl --connect-timeout 5 https://api.anthropic.com/`
+3. Does DNS resolve? If not, this confirms the Docker DNS bug
+4. Restart the container: `docker restart boot-poc`
+5. Does DNS work after container restart?
 
-**Document the result.** This tells you how aggressive your health-check/auto-restart
-needs to be in production.
+**Document the result.** This determines how aggressive the health-check/auto-restart
+needs to be in production. If DNS breaks on network change but recovers on container
+restart, a periodic health check with `docker restart` is sufficient.
 
 ### 7.3 Mid-Task Kill
 
-1. Send a long message to the bot via Telegram (something that takes 30+ seconds)
+Tests graceful degradation when the container is killed during active Claude processing.
+
+1. Send a complex message to the bot via Telegram (something that takes 30+ seconds)
 2. While Claude is processing: `docker stop boot-poc`
-3. Check: is there any corruption in `~/boot-data/`?
-4. Start the container again and check if the bot recovers cleanly
+3. Check data integrity: `sqlite3 ~/boot-data/bot.db ".tables"` (no corruption)
+4. Check workspace: `ls ~/boot-workspace/` (no partial/corrupted files)
+5. Start the container and verify the bot recovers: start it, re-run bot, send a message
+
+**What we're validating:** SQLite handles interrupted writes via WAL journaling.
+Workspace files may be partially written (acceptable — same as killing any editor).
+The bot should start cleanly without needing manual cleanup.
 
 ### 7.4 Reboot Test
+
+Full machine reboot — validates the entire host stack comes back.
 
 ```bash
 sudo reboot
 ```
 
-After reboot:
+After reboot, verify from a Tailscale SSH session or local terminal:
 
-- Is Docker running? (`systemctl is-active docker`)
-- Is Tailscale running? (`tailscale status`)
-- If you had `--restart=unless-stopped` (or the systemd unit), does Boot come back?
+```bash
+systemctl is-active docker              # → active
+tailscale status                        # → connected
+docker ps -a --filter name=boot-poc     # → Exited (no restart policy)
+```
+
+Manual recovery for POC:
+
+```bash
+docker start boot-poc
+docker exec -it boot-poc bash
+# re-run bot startup from Step 5.4
+```
+
+**Production difference:** The systemd unit (Phase 5.x) will auto-start the container
+after boot. The POC only validates that Docker and Tailscale survive the reboot.
 
 ---
 
@@ -389,15 +577,21 @@ After reboot:
 
 After completing all steps, you have concrete answers to:
 
-| Question                                            | Expected Answer                                |
-| --------------------------------------------------- | ---------------------------------------------- |
-| Does the container boundary actually isolate?       | Yes — can't see host filesystem                |
-| Do file permissions work across the boundary?       | Yes — UID 1000 matches                         |
-| Does Claude Code CLI work inside the container?     | Yes — subscription auth via mounted credentials |
-| Does a real Telegram bot work inside the container? | Yes — RichardAtCT's bot runs                   |
-| What happens on daemon restart?                     | Container dies, comes back with restart policy |
-| Does DNS break on network change?                   | Probably yes — need health check               |
-| Is the kill switch real?                            | Yes — `docker stop` kills everything           |
+| Question                                            | Expected Answer                                  |
+| --------------------------------------------------- | ------------------------------------------------ |
+| Does the container boundary actually isolate?       | Yes — can't see host filesystem                  |
+| Are Linux capabilities dropped?                     | Yes — no mount, no net config, no raw sockets    |
+| Can processes escalate privileges?                  | No — NoNewPrivs=1, no sudo, no setuid escalation |
+| Is PID 1 an init process?                           | Yes — tini handles zombie reaping + signals      |
+| Are resource limits enforced?                       | Yes — 4GB mem, 2GB swap, 4 CPUs, 512 PIDs        |
+| Is the blast radius limited to volumes?             | Yes — only /workspace and /data are writable     |
+| Do file permissions work across the boundary?       | Yes — UID 1000 matches                           |
+| Does Claude Code CLI work inside the container?     | Yes — subscription auth via mounted credentials  |
+| Does a real Telegram bot work inside the container? | Yes — RichardAtCT's bot runs                     |
+| Are any ports exposed inbound?                      | No — bot uses outbound polling only              |
+| What happens on daemon restart?                     | Container dies, needs restart policy/systemd     |
+| Does DNS break on network change?                   | Probably yes — need health check                 |
+| Is the kill switch real?                            | Yes — `docker stop` kills everything             |
 
 **If all answers match expectations**: proceed to `boot/` phases and build your
 own implementation on this validated foundation.

@@ -38,8 +38,11 @@ step-by-step implementation specs.
 - Never run Boot's container with `--privileged`.
 - Container user must be UID 1000:1000 (matches host user).
 - Resource limits: `--memory=4g --memory-swap=6g --cpus=4 --pids-limit=512`.
-- Security hardening: `--cap-drop ALL --security-opt=no-new-privileges --read-only`.
-- Tmpfs mounts must use `noexec,nosuid` with size limits.
+- Security hardening: `--cap-drop ALL --security-opt=no-new-privileges`.
+- Optional: `--read-only` makes the container rootfs immutable (no `pip install`, `apt-get`,
+  etc. at runtime). Use for locked-down deployments where all deps are pre-baked in the image.
+  Omit for agentic use cases where the assistant needs to install packages on the fly.
+- Tmpfs mounts must use `noexec,nosuid` with size limits (when using `--read-only`).
 - Boot source mounted read-only (`boot-src:/app:ro`).
 - Multi-stage Dockerfile: no compilers (gcc, make) in the runtime image.
 
@@ -94,6 +97,6 @@ phases/               → This directory — implementation specs (not deployed)
 ## Known Operational Concerns
 
 - Docker DNS breaks on host network changes (Omarchy routes via 172.17.0.1 bridge IP)
-- Read-only rootfs blocks runtime installs — deps belong in the Dockerfile, rebuild when changed
+- `--read-only` is optional (not default). When used, deps must be pre-baked in the Dockerfile
 - No AppArmor/SELinux on Arch — Docker seccomp is the only kernel-level MAC
 - Mac Mini 2018 thermal throttling during sustained builds (~20-40% perf loss)

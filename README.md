@@ -111,8 +111,9 @@ Memory:     --memory=4g --memory-swap=6g
 CPU:        --cpus=4
 PIDs:       --pids-limit=512
 User:       --user 1000:1000 (matches host UID)
-Security:   --cap-drop ALL --security-opt=no-new-privileges --read-only
-Tmpfs:      /tmp (512MB, noexec) + /home/node (256MB, noexec)
+Security:   --cap-drop ALL --security-opt=no-new-privileges
+Optional:   --read-only (immutable rootfs — use for locked-down, non-agentic deployments)
+Tmpfs:      /tmp (512MB, noexec) + /home/node (256MB, noexec) — when using --read-only
 Volumes:    ~/boot-workspace:/workspace (projects — blast radius)
             ~/boot-data:/data (SQLite, config, Claude auth)
             ~/boot-src:/app:ro (source code — read-only)
