@@ -1,41 +1,42 @@
 # RALY — Run Assistants Locally Yourself
 
-A safe space to evaluate, test, and build with AI assistants on your own machine — with known blast radius, one-command kill switch, and zero cloud dependencies.
+A personal learning journal about running AI assistants in Docker on my own machine.
 
-## Why This Exists
+## What This Is
 
-I'm not a Linux expert. I'm not a networking expert. I'm a developer who's curious, excited about AI assistants, and cautious enough to know I should be careful.
+This is a learning journal with a name. Not a framework, not a library, not a product.
 
-AI assistants are big topic right now — OpenClaw, Nanoclaw, and whatever drops tomorrow. I want to try all of them. I want to experiment, build things, and have fun. But I also want to know that when I give an AI assistant access to my machine, I understand exactly what it can touch and what happens if something goes wrong.
+I wanted to run AI assistants on my own hardware and understand what they can touch. I didn't know much about Linux security or Docker isolation when I started. So I learned, made mistakes, and wrote everything down in the `phases/` directory.
 
-I couldn't find a simple guide that said: "here's how to set up a safe playground for AI assistants on your own hardware, with known tradeoffs, in a way that doesn't require a PhD in systems administration."
+The "security model" is really just Docker flags (`--cap-drop ALL`, `--memory=4g`, `--pids-limit=512`) applied to a specific machine. Docker does the hard work. RALY documents which flags I chose, why, and what I learned along the way — including what I got wrong.
 
-So I'm building one. And I'm documenting every step because maybe you want the same thing.
+## What This Isn't
 
-This is a personal project. I'm learning as I go and testing on a spare machine, making mistakes, and writing it all down. If you know more about Linux, containers, or security than I do **— I'd love your help making this easier and safer for everyone**.
+- **Not a security framework.** The 15 "security layers" listed below are mostly Docker's existing features plus standard host hardening. RALY didn't build them.
+- **Not assistant-agnostic in a novel way.** Running different programs in Docker is just what Docker does. The POCs below prove the container works, not that RALY adds something on top.
+- **Not a complete threat model.** The container protects the host, but the assistant has full network access and can read/write/delete everything in the mounted volumes. Prompt injection is explicitly your problem.
 
-Today it's a reference repo. Fork it, adapt it, learn from it.
+## What It's Actually Good For
 
-## The Problem
+- **Specificity over generic checklists.** This documents what I did on one Mac Mini running Omarchy (Arch Linux), not "here's a list of things you should probably do."
+- **Honest tradeoff documentation.** No AppArmor on Arch — accepted. `--read-only` dropped because agents install packages — accepted. Most projects hide their compromises.
 
-Every new AI assistant wants full access to your machine. You want to try them. You also want to:
+If you're in a similar situation — curious about AI assistants, cautious about giving them access, not a sysadmin — the `phases/` directory might save you some time. Or at least some of the same mistakes.
 
-- **Know exactly what it can touch** — not "trust me, it's sandboxed"
-- **Kill it with one command** — `docker stop boot`
-- **Run it on YOUR hardware** — no cloud VMs, no subscriptions, no vendor lock-in
-- **Test any assistant** — swap one out, drop another in, same system
+## Drop-In Tests
 
-RALY is the framework and tooling that guards you so you can have fun and learn.
+To validate the container works, I dropped real bots into it:
 
-## The SideQuest: Boot — First-Class Citizen
+- [RichardAtCT/claude-code-telegram](https://github.com/RichardAtCT/claude-code-telegram) (Python) — first test, validated the boundary end-to-end
+- [linuz90/claude-telegram-bot](https://github.com/linuz90/claude-telegram-bot) (TypeScript/Bun) — second test, different runtime, same container
 
-RALY lets you try any assistant safely. But after enough evaluating, you start wanting something that's just _yours_ — built the way you want, for the things you actually do.
+Both worked with zero changes to the container setup. That's not a RALY feature — that's Docker. But it confirmed the setup is correct.
 
-That's Boot. It's the assistant I'm building for myself using RALY as the foundation. Same idea as Omarchy — opinionated, scoped, built for one person's workflow. Not trying to be the best assistant out there. Just mine.
+## Boot
 
-Right now Boot talks to me over Telegram, runs Claude Code CLI inside a container, and works on whatever I point it at. It's a POC. The point isn't Boot itself — it's showing that once RALY handles the boring security stuff, building your own assistant on top is the fun part.
+After enough evaluating, I started wanting an assistant that's just _mine_ — built the way I want, for the things I actually do.
 
-The system layer doesn't care what assistant you run. Drop in [RichardAtCT's claude-code-telegram](https://github.com/RichardAtCT/claude-code-telegram), OpenClaw, or whatever you want. Try them all. Then build your own Boot.
+That's Boot. Same idea as Omarchy — opinionated, scoped, built for one person's workflow. Talks to me over Telegram, runs Claude Code CLI inside the container, works on whatever I point it at. Not trying to be the best assistant. Just mine.
 
 ## Architecture
 
@@ -79,13 +80,14 @@ The project is split into two layers:
 
 ### System Layer (host hardening — assistant-agnostic)
 
-| Phase                                   | Description                                         | Status |
-| --------------------------------------- | --------------------------------------------------- | ------ |
-| [Phase 0](phases/00-preflight.md)       | Pre-flight checks                                   | Done   |
-| [Phase 1](phases/01-os-hardening.md)    | OS-level hardening (sysctl, UFW, core dumps)        | Done   |
-| [Phase 2](phases/02-boot-container.md)  | Container setup (Dockerfile, volumes, systemd)      | Done   |
-| [Phase 3](phases/03-tailscale-setup.md) | Tailscale ACL configuration                         | Done   |
-| [POC Plan](phases/POC-PLAN.md)          | Validation with RichardAtCT's bot as a drop-in test | Ready  |
+| Phase                                                 | Description                                         | Status |
+| ----------------------------------------------------- | --------------------------------------------------- | ------ |
+| [Phase 0](phases/00-preflight.md)                     | Pre-flight checks                                   | Done   |
+| [Phase 1](phases/01-os-hardening.md)                  | OS-level hardening (sysctl, UFW, core dumps)        | Done   |
+| [Phase 2](phases/02-boot-container.md)                | Container setup (Dockerfile, volumes, systemd)      | Done   |
+| [Phase 3](phases/03-tailscale-setup.md)               | Tailscale ACL configuration                         | Done   |
+| [POC: Python](phases/POC-Python-Assistant.md)         | Validation with RichardAtCT's bot as a drop-in test | Done   |
+| [POC: TypeScript](phases/POC-Typescript-Assistant.md) | Validation with linuz90's bot as a second drop-in   | Ready  |
 
 ### Boot Layer (reference assistant implementation)
 
@@ -144,13 +146,13 @@ L15: 3 Python dependencies (auditable in minutes)
 
 ## Known Operational Concerns
 
-| Concern                                 | Impact                                   | Mitigation                                               |
-| --------------------------------------- | ---------------------------------------- | -------------------------------------------------------- |
-| Docker DNS breaks on network change     | Bot loses API access                     | Health check + auto-restart                              |
+| Concern                                 | Impact                                   | Mitigation                                                   |
+| --------------------------------------- | ---------------------------------------- | ------------------------------------------------------------ |
+| Docker DNS breaks on network change     | Bot loses API access                     | Health check + auto-restart                                  |
 | Container drift from runtime installs   | Read-only rootfs blocks system installs  | Deps in Dockerfile (multi-stage build), rebuild when changed |
-| `omarchy-update` restarts Docker daemon | Container dies                           | systemd `Restart=always` + crash-resilient design        |
-| No AppArmor/SELinux on Arch             | Fewer kernel-level restrictions          | Accepted trade-off, Docker seccomp still active          |
-| Mac Mini 2018 thermal throttling        | 20-40% perf loss during sustained builds | Workloads are bursty, chassis recovers between API waits |
+| `omarchy-update` restarts Docker daemon | Container dies                           | systemd `Restart=always` + crash-resilient design            |
+| No AppArmor/SELinux on Arch             | Fewer kernel-level restrictions          | Accepted trade-off, Docker seccomp still active              |
+| Mac Mini 2018 thermal throttling        | 20-40% perf loss during sustained builds | Workloads are bursty, chassis recovers between API waits     |
 
 ## Roadmap
 
