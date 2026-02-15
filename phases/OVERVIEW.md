@@ -26,6 +26,7 @@ Remote access: Tailscale SSH (`tailscale up --ssh`) — no openssh sshd.
 | `05.4-claude-executor.md`      | executor.py (subprocess, ~100 LOC) | Phase 5.2              | 2 hours       | 5       |
 | `05.5-session-memory.md`       | session.py, memory.py              | Phase 5.2              | 3 hours       | 5       |
 | `05.6-cron-scheduler.md`       | Health checks + scheduled tasks    | Phase 5.3              | 2 hours       | 6       |
+| `05.8-structured-memory.md`    | Structured memory (memubot-inspired) | Phases 5.4, 5.5      | 4-6 hours     | 6       |
 | `06-verification.md`           | Full Verification                  | All prior phases       | 30 min        | 7       |
 | `07-ongoing-ops.md`            | Ongoing Operations                 | Phase 6                | Reference doc | -       |
 
@@ -44,6 +45,7 @@ Phase 2 + Phase 4 → All Phase 5.x (code runs inside Boot container)
   │     ├── Phase 5.3 (telegram handler) ← also depends on 5.1
   │     ├── Phase 5.4 (executor) ← simplified, no sub-containers
   │     └── Phase 5.5 (session/memory)
+  ├── Phase 5.4 + 5.5 → Phase 5.8 (structured memory, memubot-inspired)
   └── Phase 5.3 → Phase 5.6 (health/cron)
 
 Phase 5-study (research) can run in parallel with Phases 0-4.

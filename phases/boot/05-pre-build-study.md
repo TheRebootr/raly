@@ -104,7 +104,46 @@ Questions to answer:
 - Is this pattern worth adopting for Boot?
 - (This is for future enhancement, not initial build)
 
-### Target 3: Anthropic's Claude Code Sandboxing Post (30 min)
+### Target 3: HKUDS/nanobot (Secondary — 1-2 hours)
+
+Repository: https://github.com/HKUDS/nanobot
+
+Ultra-lightweight personal AI assistant framework (~4K lines Python). The best reference
+for Boot's overall agent architecture — proves a full agent doesn't need framework bloat.
+
+#### 3a. Agent Loop
+
+Read the core agent entry point.
+Questions to answer:
+- How does the main agent loop work? (receive → context → LLM → respond)
+- How is conversation context built before each LLM call?
+- How are tools/capabilities registered and invoked?
+
+#### 3b. Gateway / Channel Abstraction
+
+Read the gateway/channel layer.
+Questions to answer:
+- How does nanobot abstract over Telegram/Discord/etc.?
+- Is the abstraction worth adopting, or overkill for single-channel Boot?
+- How does message routing work (user input → agent → response → channel)?
+
+#### 3c. LLM Abstraction
+
+Read the LLM provider layer.
+Questions to answer:
+- How does it support multiple LLM backends (Anthropic, OpenAI, etc.)?
+- What's the interface a provider must implement?
+- Can we simplify this for Claude-only Boot?
+
+#### 3d. Config System
+
+Read config loading and validation.
+Questions to answer:
+- YAML-based config — is this cleaner than ENV-only?
+- How are defaults structured?
+- What's the separation between agent config and channel config?
+
+### Target 4: Anthropic's Claude Code Sandboxing Post (30 min)
 
 URL: https://www.anthropic.com/engineering/claude-code-sandboxing
 
@@ -116,7 +155,7 @@ Questions to answer:
 - Can it be layered WITH our Docker wrapping (belt and suspenders)?
 - What are the limitations?
 
-### Target 4: godagoo/claude-telegram-relay (Quick scan — 15 min)
+### Target 5: godagoo/claude-telegram-relay (Quick scan — 15 min)
 
 Repository: https://github.com/godagoo/claude-telegram-relay
 
@@ -126,6 +165,8 @@ Questions to answer:
 - How is auto-restart configured?
 
 ## Deliverables
+
+See also: [`INSPIRATION.md`](INSPIRATION.md) — maps which repo informs which Boot phase.
 
 After completing all study targets, produce a single document:
 `~/boot-src/RESEARCH-NOTES.md`
@@ -171,6 +212,10 @@ Structure:
 - [ ] RichardAtCT: message handler patterns documented
 - [ ] linuz90/claude-telegram-bot: CLAUDE.md personality pattern extracted
 - [ ] linuz90: any useful grammY patterns noted
+- [ ] HKUDS/nanobot: agent loop pattern documented
+- [ ] HKUDS/nanobot: gateway/channel abstraction evaluated
+- [ ] HKUDS/nanobot: LLM abstraction pattern documented
+- [ ] HKUDS/nanobot: config system approach noted
 - [ ] Anthropic sandboxing post read: built-in sandbox capabilities documented
 - [ ] Decision made: Docker-only vs Docker+built-in sandbox vs built-in-only
 - [ ] godagoo: systemd service template patterns extracted
@@ -180,13 +225,15 @@ Structure:
 
 ## Outputs for Downstream Phases
 
-- Security patterns → Phase 5.1 (security.py)
-- Config patterns → Phase 5.2 (config.py)
-- Execution patterns → Phase 5.4 (executor.py)
-- Message handling → Phase 5.3 (telegram.py)
-- CLAUDE.md template → Phase 5.5 (memory.py)
-- systemd templates → Phase 5.6 (cron/scheduler)
-- Sandbox decision → Phase 5.4, Phase 5.7
+- Security patterns → Phase 5.1 (security.py) [RichardAtCT]
+- Config patterns → Phase 5.2 (config.py) [nanobot, RichardAtCT]
+- Message handling → Phase 5.3 (telegram.py) [linuz90, RichardAtCT, nanobot]
+- Execution patterns → Phase 5.4 (executor.py) [RichardAtCT]
+- CLAUDE.md template → Phase 5.5 (memory.py) [linuz90]
+- Agent loop architecture → Phase 5.3/5.4 (overall flow) [nanobot]
+- Structured memory patterns → Phase 5.8 (knowledge.py) [memubot]
+- systemd templates → Phase 5.6 (cron/scheduler) [godagoo]
+- Sandbox decision → Phase 5.4 [Anthropic blog]
 
 ## Internet Validation Instruction
 
