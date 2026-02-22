@@ -50,8 +50,8 @@ You (Telegram) ──→ Telegram API ──→ [polling, no inbound ports]
              ├── LUKS full-disk encryption
              │
              └── Boot Container (Debian Bookworm)
-                   ├── Claude Code CLI (full network for API access)
-                   ├── Python bot (Telegram polling + task routing)
+                   ├── Claude Code CLI (via Agent SDK, full network for API access)
+                   ├── TypeScript/Bun bot (Telegram polling + multi-input handling)
                    ├── Volume: ~/BootDrive/workspace → /workspace
                    └── Volume: ~/BootDrive/data → /data (SQLite, config)
 ```
@@ -87,26 +87,26 @@ The project is split into two layers:
 | [Phase 2](phases/02-boot-container.md)                | Container setup (Dockerfile, volumes, systemd)      | Done   |
 | [Phase 3](phases/03-tailscale-setup.md)               | Tailscale ACL configuration                         | Done   |
 | [POC: Python](phases/POC-Python-Assistant.md)         | Validation with RichardAtCT's bot as a drop-in test | Done   |
-| [POC: TypeScript](phases/POC-Typescript-Assistant.md) | Validation with linuz90's bot as a second drop-in   | Ready  |
+| [POC: TypeScript](phases/POC-Typescript-Assistant.md) | Validation with linuz90's bot as a second drop-in   | Done   |
 
 ### Boot Layer (reference assistant implementation)
 
 | Phase                                             | Description                              | Status  |
 | ------------------------------------------------- | ---------------------------------------- | ------- |
-| [Phase 4](phases/boot/04-telegram-bot-setup.md)   | Telegram bot token + directory structure | Planned |
-| [Phase 5.1](phases/boot/05.1-security-module.md)  | security.py (auth, rate limit, audit)    | Planned |
-| [Phase 5.2](phases/boot/05.2-config-module.md)    | config.py                                | Planned |
-| [Phase 5.3](phases/boot/05.3-telegram-handler.md) | telegram.py (message handling)           | Planned |
-| [Phase 5.4](phases/boot/05.4-claude-executor.md)  | executor.py (Claude CLI subprocess)      | Planned |
-| [Phase 5.5](phases/boot/05.5-session-memory.md)   | session.py + memory.py (SQLite state)    | Planned |
-| [Phase 5.6](phases/boot/05.6-cron-scheduler.md)   | Health checks + scheduled tasks          | Planned |
-| [Phase 6](phases/boot/06-verification.md)         | Full verification                        | Planned |
-| [Phase 7](phases/boot/07-ongoing-ops.md)          | Ongoing operations reference             | Planned |
+| [Phase 4](phases/boot/04-telegram-bot-setup.md)   | Telegram bot token + directory structure            | Done    |
+| [Phase 5.1](phases/boot/05.1-security-module.md)  | Security (auth, rate limit, audit)                  | Fork    |
+| [Phase 5.2](phases/boot/05.2-config-module.md)    | Config (env, MCP, safety prompts)                   | Fork    |
+| [Phase 5.3](phases/boot/05.3-telegram-handler.md) | Telegram handlers (multi-input)                     | Fork    |
+| [Phase 5.4](phases/boot/05.4-claude-executor.md)  | Claude session (Agent SDK)                          | Fork    |
+| [Phase 5.5](phases/boot/05.5-session-memory.md)   | Session persistence + memory                        | Fork    |
+| [Phase 5.6](phases/boot/05.6-cron-scheduler.md)   | Health checks + scheduled tasks                     | Planned |
+| [Phase 6](phases/boot/06-verification.md)         | Full verification                                   | Planned |
+| [Phase 7](phases/boot/07-ongoing-ops.md)          | Ongoing operations reference                        | Planned |
 
 ## Container Spec
 
 ```
-Image:      node:22-bookworm-slim + Python 3.12 + Claude Code CLI
+Image:      node:22-bookworm-slim + Bun 1.3.9 + Claude Code CLI
 Build:      Multi-stage (no compilers in runtime image)
 Runtime:    --init (zombie reaping — NON-NEGOTIABLE)
 Memory:     --memory=8g --memory-swap=12g
@@ -141,7 +141,7 @@ L11: Telegram allowlist (single numeric user ID)
 L12: Token bucket rate limiter
 L13: Mounted volumes as explicit blast radius
 L14: SQLite audit trail
-L15: 3 Python dependencies (auditable in minutes)
+L15: Minimal npm dependencies (grammy, claude-agent-sdk, mcp-sdk, openai, zod)
 ```
 
 ## Known Operational Concerns
@@ -162,7 +162,8 @@ L15: 3 Python dependencies (auditable in minutes)
 
 ## References & Inspired By
 
-- [RichardAtCT/claude-code-telegram](https://github.com/RichardAtCT/claude-code-telegram) — Claude Code + Telegram bot running on bare metal. Proved the concept works. Used as RALY's POC test payload.
+- [linuz90/claude-telegram-bot](https://github.com/linuz90/claude-telegram-bot) — TypeScript/Bun Telegram bot for Claude Code. Boot is forked from this. MIT license.
+- [RichardAtCT/claude-code-telegram](https://github.com/RichardAtCT/claude-code-telegram) — Python Claude Code + Telegram bot. Used as RALY's first POC test payload.
 - [Anthropic Claude Code Sandboxing](https://www.anthropic.com/engineering/claude-code-sandboxing) — Official sandboxing guidance that informed the container security model.
 - [Omarchy](https://omarchy.com) by DHH / Basecamp — The opinionated Arch Linux distro that RALY's system layer is tested on. Desktop-first, Docker-native, Tailscale-ready.
 - [Tailscale](https://tailscale.com) — Zero-config WireGuard VPN. Replaces openssh sshd entirely in RALY's architecture.

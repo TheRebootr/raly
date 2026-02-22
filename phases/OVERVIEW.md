@@ -4,10 +4,10 @@
 
 Target: Mac Mini 2018 (i5-8500B 6-core, 32GB RAM) running Omarchy 3.3.3 (Arch Linux).
 Dual-use: headless server + occasional desktop (Chromium, printing, LocalSend).
-Goal: Custom "Boot" harness (Python, ~500-800 lines, 3 dependencies) running inside a
-long-lived Docker container (Debian Bookworm), reachable only via Telegram from a single
-authorized user. Claude Code CLI runs directly inside Boot's container with full network
-access. The container is the security boundary; mounted volumes are the accepted blast radius.
+Goal: Boot — a TypeScript/Bun Telegram bot (forked from linuz90/claude-telegram-bot) running
+inside a long-lived Docker container (Debian Bookworm), reachable only via Telegram from a
+single authorized user. Claude Code CLI runs directly inside Boot's container via the Claude
+Agent SDK. The container is the security boundary; mounted volumes are the accepted blast radius.
 Remote access: Tailscale SSH (`tailscale up --ssh`) — no openssh sshd.
 
 ## Phase Map
@@ -20,11 +20,11 @@ Remote access: Tailscale SSH (`tailscale up --ssh`) — no openssh sshd.
 | `03-tailscale-setup.md`        | Tailscale ACL Configuration        | Phase 1                | 15 min        | 1       |
 | `04-telegram-bot-setup.md`     | Telegram Bot Token + Host Dirs     | Phase 0                | 20 min        | 2       |
 | `05-pre-build-study.md`        | Pre-Build Research                 | None (can run anytime) | 3-4 hours     | 2       |
-| `05.1-security-module.md`      | security.py                        | Phase 4, Phase 5 study | 1 day         | 3       |
-| `05.2-config-module.md`        | config.py                          | Phase 4                | 2 hours       | 4       |
-| `05.3-telegram-handler.md`     | telegram.py                        | Phases 5.1, 5.2        | 4 hours       | 4       |
-| `05.4-claude-executor.md`      | executor.py (subprocess, ~100 LOC) | Phase 5.2              | 2 hours       | 5       |
-| `05.5-session-memory.md`       | session.py, memory.py              | Phase 5.2              | 3 hours       | 5       |
+| `05.1-security-module.md`      | Security (auth, rate limit, audit) | Phase 4, Phase 5 study | Customization | 3       |
+| `05.2-config-module.md`        | Config (env, MCP, safety prompts)  | Phase 4                | Customization | 4       |
+| `05.3-telegram-handler.md`     | Telegram handlers (multi-input)    | Phases 5.1, 5.2        | Customization | 4       |
+| `05.4-claude-executor.md`      | Claude session (Agent SDK)         | Phase 5.2              | Customization | 5       |
+| `05.5-session-memory.md`       | Session persistence + memory       | Phase 5.2              | Customization | 5       |
 | `05.6-cron-scheduler.md`       | Health checks + scheduled tasks    | Phase 5.3              | 2 hours       | 6       |
 | `05.8-structured-memory.md`    | Structured memory (memubot-inspired) | Phases 5.4, 5.5      | 4-6 hours     | 6       |
 | `06-verification.md`           | Full Verification                  | All prior phases       | 30 min        | 7       |
@@ -65,12 +65,12 @@ Mac Mini (Omarchy 3.x) ← Tailscale SSH (no openssh sshd)
   ├── boot-container.service (systemd → docker run)
   │
   └── Boot Container (node:22-bookworm-slim based, Debian)
-        ├── Claude Code CLI (Node.js, full network for API access)
-        ├── Python 3.12+ (Boot harness)
-        │     ├── security.py (auth, rate limit, input validation, audit)
-        │     ├── telegram.py (message handling, routing)
-        │     ├── executor.py (subprocess → claude CLI, no sub-containers)
-        │     └── session.py + memory.py (SQLite state)
+        ├── Claude Code CLI (via Claude Agent SDK, full network for API access)
+        ├── Bun runtime (TypeScript bot, forked from linuz90/claude-telegram-bot)
+        │     ├── security.ts (auth, rate limit, path validation, command safety)
+        │     ├── handlers/ (text, voice, photo, document, video, callback)
+        │     ├── session.ts (Claude session management, streaming)
+        │     └── config.ts + formatting.ts + utils.ts
         ├── Volume: ~/BootDrive/workspace → /workspace (projects, blast radius)
         └── Volume: ~/BootDrive/data → /data (SQLite, config, Claude auth)
 ```
@@ -103,8 +103,8 @@ NOT:        --privileged, Docker socket mount, --network none
 2. **Clean security boundary**: If Boot is compromised, `docker stop boot` kills it.
    Blast radius = the mounted volumes, nothing else on the host.
 3. **No Omarchy conflicts**: Boot has its own Debian. No config file ownership fights.
-4. **Simple executor**: executor.py runs `claude --print` as a subprocess. No Docker
-   command builder, no sub-container management. ~100 lines instead of ~300.
+4. **Simple executor**: session.ts manages Claude CLI via the Agent SDK as a subprocess.
+   No Docker command builder, no sub-container management.
 5. **Scalable**: Can run multiple Boot containers for different purposes later.
 
 ### What was removed from the old design
@@ -133,7 +133,7 @@ L11: Telegram allowlist (single numeric ID)
 L12: Token bucket rate limiter (requests + cost)
 L13: Mounted volumes as explicit blast radius (workspace + data only)
 L14: SQLite audit trail (every action logged)
-L15: 3 Python dependencies (auditable in minutes)
+L15: Minimal npm dependencies (grammy, claude-agent-sdk, mcp-sdk, openai, zod)
 ```
 
 ## Known Operational Concerns

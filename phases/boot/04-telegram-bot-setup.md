@@ -2,22 +2,23 @@
 
 ## Context
 
-RALY is a hardened Mac Mini 2018 running Omarchy 3.x (Arch Linux). The Boot harness
-is a custom Python process (~500-800 lines) that receives commands via Telegram polling,
-validates them through a security module, and delegates work to Claude Code CLI inside
-ephemeral Docker containers. This phase creates the Telegram bot identity, verifies
-credentials, and sets up the directory structure for Boot's code, data, and workspace.
+RALY is a hardened Mac Mini 2018 running Omarchy 3.x (Arch Linux). Boot is a TypeScript/Bun
+Telegram bot forked from [linuz90/claude-telegram-bot](https://github.com/linuz90/claude-telegram-bot)
+(MIT license), customized for RALY's architecture. It runs inside a long-lived Docker container
+(Debian Bookworm) and delegates work to Claude Code CLI as a subprocess. This phase creates the
+Telegram bot identity, verifies credentials, and sets up the directory structure.
 
 Architecture summary:
-- `~/BootDrive/app/` — Boot's source code (the harness)
-- `~/BootDrive/data/` — Boot's brain (SQLite, secrets, logs) — NEVER exposed to containers
-- `~/BootDrive/workspace/` — THE ONLY directory containers can access, per-project subdirs
+- `~/BootDrive/app/` — Boot's source code (TypeScript/Bun) + Dockerfile
+- `~/BootDrive/data/` — Boot's brain (SQLite, config, Claude auth) — bind-mounted as /data
+- `~/BootDrive/workspace/` — Project files — bind-mounted as /workspace (accepted blast radius)
 
 ## Prerequisites
 
 - Phase 0 complete: machine verified
+- Phase 2 complete: container spec finalized
 - Telegram account exists (or will be created)
-- Docker running with userns-remap from Phase 2 (needed for workspace permissions)
+- Docker running on host
 
 ## Steps
 
@@ -88,139 +89,113 @@ Verification:
 ### 4.4 Test Unauthorized Access
 
 Send a message to your bot from a DIFFERENT Telegram account (friend, secondary account).
-Then re-run the getUpdates check — note the different user ID. The harness (Phase 5.1)
+Then re-run the getUpdates check — note the different user ID. The bot's security module
 will reject any ID not in the allowlist, but verify now that you can distinguish IDs.
 
 ### 4.5 Create Directory Structure
 
 ```bash
-# Boot source code
-mkdir -p ~/BootDrive/app/boot
+# Boot source code (forked from linuz90/claude-telegram-bot)
+mkdir -p ~/BootDrive/app/src/handlers
 
-# Boot data (secrets, database, logs) — NEVER in workspace, NEVER in containers
+# Boot data (secrets, database, Claude auth) — bind-mounted as /data
 mkdir -p ~/BootDrive/data/logs
 
-# Boot workspace (mounted into containers, per-project)
-mkdir -p ~/BootDrive/workspace/scratch
+# Boot workspace (mounted into container as /workspace)
+mkdir -p ~/BootDrive/workspace/projects
 ```
 
 ### 4.6 Set Permissions
 
 ```bash
-# BootDrive/data: only your user can access (contains secrets)
+# BootDrive/data: only your user can access (contains secrets + Claude credentials)
 chmod 700 ~/BootDrive/data
 chmod 700 ~/BootDrive/data/logs
 
 # BootDrive/app: readable, your code
 chmod 755 ~/BootDrive/app
 
-# BootDrive/workspace: needs to be accessible by both your user and Docker's remapped user
-# With userns-remap, container root maps to host UID in the dockremap subuid range.
-# Check the mapped UID:
-REMAP_UID=$(grep dockremap /etc/subuid | cut -d: -f2)
-echo "Docker remapped UID starts at: $REMAP_UID"
-
-# Option A: Use ACLs for dual access (preferred)
-sudo pacman -S acl --needed
-# Allow your user AND the remapped UID to read/write workspace
-setfacl -R -m u:${REMAP_UID}:rwx ~/BootDrive/workspace
-setfacl -R -d -m u:${REMAP_UID}:rwx ~/BootDrive/workspace
-
-# Option B: Simpler but less precise — make workspace world-readable
-# chmod -R 777 ~/BootDrive/workspace
-# (Not recommended — too permissive)
+# BootDrive/workspace: container user is node (UID 1000), which matches host user
+# No ACLs needed — same UID inside and outside the container
+chmod 755 ~/BootDrive/workspace
 ```
 
-### 4.7 Create Secrets File
+### 4.7 Create Environment File
 
 ```bash
-# Create config.env with restricted permissions
-touch ~/BootDrive/data/config.env
-chmod 600 ~/BootDrive/data/config.env
+touch ~/BootDrive/data/.env
+chmod 600 ~/BootDrive/data/.env
 ```
 
-Edit `~/BootDrive/data/config.env`:
+Edit `~/BootDrive/data/.env`:
 
 ```bash
 # RALY Boot Configuration
-# This file is chmod 600 and NEVER enters a container or repo
+# This file is chmod 600 and passed to the container via --env-file or compose
 
+# Required
 TELEGRAM_BOT_TOKEN=<your-bot-token-from-step-4.1>
 TELEGRAM_ALLOWED_USERS=<your-user-id-from-step-4.2>
 
-# Claude Code CLI auth — if using CLI, authenticate interactively first:
-#   claude auth login
-# If using API key instead:
-# ANTHROPIC_API_KEY=<your-api-key>
+# Recommended
+CLAUDE_WORKING_DIR=/workspace/projects
+# OPENAI_API_KEY=sk-...  # For voice transcription (optional)
 
-# Rate limiting
-RATE_LIMIT_REQUESTS_PER_MINUTE=10
-RATE_LIMIT_MAX_COST_PER_HOUR=100
+# Optional — rate limiting
+RATE_LIMIT_ENABLED=true
+RATE_LIMIT_REQUESTS=20
+RATE_LIMIT_WINDOW=60
 
-# Workspace
-BOOT_WORKSPACE=/home/<your-username>/BootDrive/workspace
-BOOT_DATA=/home/<your-username>/BootDrive/data
+# Optional — extended thinking keywords
+# THINKING_KEYWORDS=think,reason,analyze
+# THINKING_DEEP_KEYWORDS=ultrathink
+
+# Optional — audit logging
+# AUDIT_LOG_PATH=/data/logs/audit.log
 ```
 
-### 4.8 Create Source File Stubs
+### 4.8 Verify Fork Source
 
-```bash
-touch ~/BootDrive/app/boot/__init__.py
-touch ~/BootDrive/app/boot/main.py
-touch ~/BootDrive/app/boot/config.py
-touch ~/BootDrive/app/boot/security.py
-touch ~/BootDrive/app/boot/telegram.py
-touch ~/BootDrive/app/boot/executor.py
-touch ~/BootDrive/app/boot/session.py
-touch ~/BootDrive/app/boot/memory.py
-touch ~/BootDrive/app/requirements.txt
-touch ~/BootDrive/app/Dockerfile.sandbox
-touch ~/BootDrive/app/CLAUDE.md
+The bot source at `~/BootDrive/app/` is a fork of
+[linuz90/claude-telegram-bot](https://github.com/linuz90/claude-telegram-bot).
+
+Expected source structure:
+
+```
+~/BootDrive/app/
+├── Dockerfile           # Multi-stage build (Bun + Node 22)
+├── package.json         # Dependencies (grammy, claude-agent-sdk, etc.)
+├── bun.lockb            # Bun lockfile
+├── .env.example         # Template for environment variables
+└── src/
+    ├── index.ts         # Entry point, handler registration
+    ├── config.ts        # Env parsing, MCP loading, safety prompts
+    ├── session.ts       # ClaudeSession class, streaming, persistence
+    ├── security.ts      # Rate limiter, path validation, command safety
+    ├── formatting.ts    # Markdown→HTML conversion for Telegram
+    ├── types.ts         # Shared TypeScript types
+    ├── utils.ts         # Audit logging, transcription, typing indicators
+    └── handlers/
+        ├── index.ts     # Handler exports
+        ├── commands.ts  # /start, /new, /stop, /status, /resume, /restart
+        ├── text.ts      # Text message handling
+        ├── voice.ts     # Voice→text transcription (OpenAI)
+        ├── audio.ts     # Audio file transcription
+        ├── photo.ts     # Image analysis + media group buffering
+        ├── document.ts  # PDF extraction, archives, routing
+        ├── video.ts     # Video/video note handling
+        ├── callback.ts  # Inline button handling (ask_user MCP)
+        └── streaming.ts # StreamingState, status callbacks
 ```
 
-### 4.9 Create requirements.txt
+Key dependencies (from `package.json`):
+- `grammy` — Telegram bot framework
+- `@anthropic-ai/claude-agent-sdk` — Claude Code CLI subprocess management
+- `@modelcontextprotocol/sdk` — MCP server support
+- `openai` — Voice transcription (Whisper)
+- `zod` — Schema validation
 
-```bash
-cat > ~/BootDrive/app/requirements.txt << 'EOF'
-python-telegram-bot==21.6
-aiosqlite==0.20.0
-EOF
-```
-
-That's 2 runtime dependencies (3rd is `sqlite3` from stdlib). Pin exact versions.
-Check for latest stable versions before finalizing.
-
-### 4.10 Initialize Git Repository (optional but recommended)
-
-```bash
-cd ~/BootDrive/app
-git init
-cat > .gitignore << 'EOF'
-__pycache__/
-*.pyc
-*.pyo
-.env
-config.env
-*.db
-venv/
-.venv/
-EOF
-git add .
-git commit -m "Initial Boot harness structure"
-```
-
-This is your backup mechanism. Optionally push to a private repo.
-
-### 4.11 Set Up Python Virtual Environment
-
-```bash
-cd ~/BootDrive/app
-python3 -m venv venv
-source venv/bin/activate
-pip install -r requirements.txt
-```
-
-### 4.12 Clean Up Test Script
+### 4.9 Clean Up Test Script
 
 Delete the verification script from step 4.3. Don't leave bot tokens in command history:
 
@@ -238,49 +213,30 @@ history -d $(history | grep "BOT_TOKEN\|TOKEN=" | awk '{print $1}') 2>/dev/null
 - [ ] Bot token verified working (getMe API call succeeded)
 - [ ] Your user ID confirmed via getUpdates match
 - [ ] Unauthorized user ID is different from yours (tested with different account)
-- [ ] `~/BootDrive/app/boot/` directory exists with all stub files
-- [ ] `~/BootDrive/data/` exists, permissions `700`, contains `config.env` (permissions `600`)
+- [ ] `~/BootDrive/app/src/` directory exists with TypeScript source files
+- [ ] `~/BootDrive/data/` exists, permissions `700`, contains `.env` (permissions `600`)
 - [ ] `~/BootDrive/data/logs/` exists, permissions `700`
-- [ ] `~/BootDrive/workspace/scratch/` exists
-- [ ] Workspace permissions allow Docker remapped UID access (ACL or permissions set)
-- [ ] `config.env` populated with token, user ID, and paths
-- [ ] `config.env` is NOT in any git repo
-- [ ] `requirements.txt` has pinned dependencies
-- [ ] Python venv created and dependencies installed
-- [ ] Git repo initialized in `~/BootDrive/app/` with proper `.gitignore`
+- [ ] `~/BootDrive/workspace/projects/` exists
+- [ ] `.env` populated with token and user ID
+- [ ] `.env` is NOT in any git repo
+- [ ] `package.json` has pinned dependencies
+- [ ] Dockerfile present and builds successfully
 - [ ] Test script deleted, bot token not in shell history
 
 ## Outputs for Downstream Phases
 
-- Bot token → Phase 5.2 (config.py loads it)
-- User ID → Phase 5.1 (security.py allowlist)
+- Bot token → loaded from `.env` by container at startup
+- User ID → used by `security.ts` allowlist
 - Directory structure → Phase 5.x (all modules use these paths)
-- `config.env` path → Phase 5.2 (config.py reads from this)
-- Workspace ACL setup → Phase 5.4 (executor.py mounts workspace into containers)
-- requirements.txt → Phase 5.x (dependency list)
-- venv → Phase 5.x (development environment)
+- `.env` path → passed to container via `--env-file` or compose `env_file:`
+- Source code → baked into Docker image via `COPY` (edit on host, rebuild to deploy)
 
 ## Security Notes
 
 - The bot token grants full control of the bot. Anyone with it can read messages
   sent to the bot and send messages as the bot. Guard it like a password.
-- `config.env` at `chmod 600` means only your user can read it. The Boot service
-  (Phase 5) must run as your user to access it.
-- The workspace directory is the ONLY place containers can write. Boot's data and
-  source code are never mounted into containers.
-
-## Internet Validation Instruction
-
-Before executing this phase, perform a web search for:
-- "python-telegram-bot latest version PyPI 2025 2026"
-- "aiosqlite latest version PyPI 2025 2026"
-- "Telegram BotFather create bot 2025"
-- "Docker userns-remap volume permissions ACL"
-- "Telegram bot token security best practices"
-
-Verify that:
-1. `python-telegram-bot` version 21.6 is current (or find the latest stable)
-2. `aiosqlite` version 0.20.0 is current (or find the latest stable)
-3. BotFather workflow hasn't changed
-4. ACL approach for Docker volume permissions is still recommended
-5. No new Telegram bot security advisories
+- `.env` at `chmod 600` means only your user can read it. The container receives
+  env vars at startup (not the file itself).
+- The workspace directory is the accepted blast radius. Boot's data directory
+  (`~/BootDrive/data/`) is also mounted but contains only state and credentials.
+- Boot source code is baked into the image — not volume-mounted at runtime.

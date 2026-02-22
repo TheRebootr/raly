@@ -5,17 +5,17 @@
 RALY (Run Assistants Locally Yourself) is a developer reference repo for running AI
 assistants inside Docker containers on your own machine. The system layer is
 assistant-agnostic — any AI assistant (coding, chat, agentic) can be dropped in.
-"Boot" is RALY's first-class reference assistant — a Python-based harness that runs
-Claude Code CLI inside a Docker container on a Mac Mini 2018 (Omarchy 3.3.3 / Arch Linux).
-The user communicates with Boot exclusively via Telegram. The phases/ directory contains
-step-by-step implementation specs.
+"Boot" is RALY's first-class reference assistant — a TypeScript/Bun Telegram bot (forked
+from linuz90/claude-telegram-bot) that runs Claude Code CLI inside a Docker container on a
+Mac Mini 2018 (Omarchy 3.3.3 / Arch Linux). The user communicates with Boot exclusively
+via Telegram. The phases/ directory contains step-by-step implementation specs.
 
 ## Core Architecture
 
 - **Host (Omarchy)**: Runs Docker, manages the Boot container via systemd. Does not run Boot
   code directly. Protected by UFW, sysctl hardening, Tailscale, LUKS.
 - **Boot Container (Debian Bookworm)**: Long-lived Docker container based on
-  `node:22-bookworm-slim`. Runs the Python Telegram bot + Claude Code CLI. Has full outbound
+  `node:22-bookworm-slim`. Runs the TypeScript/Bun Telegram bot + Claude Code CLI. Has full outbound
   network access. The container IS the security boundary.
 - **Volumes**: `~/BootDrive/workspace` (project files) and `~/BootDrive/data` (SQLite, config) are
   bind-mounted. These are the accepted blast radius — if Boot is compromised, only these
@@ -39,7 +39,7 @@ step-by-step implementation specs.
 - Container user must be UID 1000:1000 (matches host user).
 - Resource limits: `--memory=8g --memory-swap=12g --cpus=4 --pids-limit=512`.
 - Security hardening: `--cap-drop ALL --security-opt=no-new-privileges`.
-- Optional: `--read-only` makes the container rootfs immutable (no `pip install`, `apt-get`,
+- Optional: `--read-only` makes the container rootfs immutable (no `npm install`, `apt-get`,
   etc. at runtime). Use for locked-down deployments where all deps are pre-baked in the image.
   Omit for agentic use cases where the assistant needs to install packages on the fly.
 - Tmpfs mounts must use `noexec,nosuid` with size limits (when using `--read-only`).
@@ -90,7 +90,7 @@ Key phases:
 ```
 ~/BootDrive/workspace/     → Mounted as /workspace in container (project files)
 ~/BootDrive/data/          → Mounted as /data in container (SQLite, config, Claude auth)
-~/BootDrive/app/           → Boot source code (Python), built into container image
+~/BootDrive/app/           → Boot source code (TypeScript/Bun), built into container image
 phases/               → This directory — implementation specs (not deployed)
 ```
 
