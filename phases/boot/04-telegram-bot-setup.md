@@ -9,9 +9,9 @@ ephemeral Docker containers. This phase creates the Telegram bot identity, verif
 credentials, and sets up the directory structure for Boot's code, data, and workspace.
 
 Architecture summary:
-- `~/boot-src/` — Boot's source code (the harness)
-- `~/boot-data/` — Boot's brain (SQLite, secrets, logs) — NEVER exposed to containers
-- `~/boot-workspace/` — THE ONLY directory containers can access, per-project subdirs
+- `~/BootDrive/app/` — Boot's source code (the harness)
+- `~/BootDrive/data/` — Boot's brain (SQLite, secrets, logs) — NEVER exposed to containers
+- `~/BootDrive/workspace/` — THE ONLY directory containers can access, per-project subdirs
 
 ## Prerequisites
 
@@ -95,26 +95,26 @@ will reject any ID not in the allowlist, but verify now that you can distinguish
 
 ```bash
 # Boot source code
-mkdir -p ~/boot-src/boot
+mkdir -p ~/BootDrive/app/boot
 
 # Boot data (secrets, database, logs) — NEVER in workspace, NEVER in containers
-mkdir -p ~/boot-data/logs
+mkdir -p ~/BootDrive/data/logs
 
 # Boot workspace (mounted into containers, per-project)
-mkdir -p ~/boot-workspace/scratch
+mkdir -p ~/BootDrive/workspace/scratch
 ```
 
 ### 4.6 Set Permissions
 
 ```bash
-# boot-data: only your user can access (contains secrets)
-chmod 700 ~/boot-data
-chmod 700 ~/boot-data/logs
+# BootDrive/data: only your user can access (contains secrets)
+chmod 700 ~/BootDrive/data
+chmod 700 ~/BootDrive/data/logs
 
-# boot-src: readable, your code
-chmod 755 ~/boot-src
+# BootDrive/app: readable, your code
+chmod 755 ~/BootDrive/app
 
-# boot-workspace: needs to be accessible by both your user and Docker's remapped user
+# BootDrive/workspace: needs to be accessible by both your user and Docker's remapped user
 # With userns-remap, container root maps to host UID in the dockremap subuid range.
 # Check the mapped UID:
 REMAP_UID=$(grep dockremap /etc/subuid | cut -d: -f2)
@@ -123,11 +123,11 @@ echo "Docker remapped UID starts at: $REMAP_UID"
 # Option A: Use ACLs for dual access (preferred)
 sudo pacman -S acl --needed
 # Allow your user AND the remapped UID to read/write workspace
-setfacl -R -m u:${REMAP_UID}:rwx ~/boot-workspace
-setfacl -R -d -m u:${REMAP_UID}:rwx ~/boot-workspace
+setfacl -R -m u:${REMAP_UID}:rwx ~/BootDrive/workspace
+setfacl -R -d -m u:${REMAP_UID}:rwx ~/BootDrive/workspace
 
 # Option B: Simpler but less precise — make workspace world-readable
-# chmod -R 777 ~/boot-workspace
+# chmod -R 777 ~/BootDrive/workspace
 # (Not recommended — too permissive)
 ```
 
@@ -135,11 +135,11 @@ setfacl -R -d -m u:${REMAP_UID}:rwx ~/boot-workspace
 
 ```bash
 # Create config.env with restricted permissions
-touch ~/boot-data/config.env
-chmod 600 ~/boot-data/config.env
+touch ~/BootDrive/data/config.env
+chmod 600 ~/BootDrive/data/config.env
 ```
 
-Edit `~/boot-data/config.env`:
+Edit `~/BootDrive/data/config.env`:
 
 ```bash
 # RALY Boot Configuration
@@ -158,30 +158,30 @@ RATE_LIMIT_REQUESTS_PER_MINUTE=10
 RATE_LIMIT_MAX_COST_PER_HOUR=100
 
 # Workspace
-BOOT_WORKSPACE=/home/<your-username>/boot-workspace
-BOOT_DATA=/home/<your-username>/boot-data
+BOOT_WORKSPACE=/home/<your-username>/BootDrive/workspace
+BOOT_DATA=/home/<your-username>/BootDrive/data
 ```
 
 ### 4.8 Create Source File Stubs
 
 ```bash
-touch ~/boot-src/boot/__init__.py
-touch ~/boot-src/boot/main.py
-touch ~/boot-src/boot/config.py
-touch ~/boot-src/boot/security.py
-touch ~/boot-src/boot/telegram.py
-touch ~/boot-src/boot/executor.py
-touch ~/boot-src/boot/session.py
-touch ~/boot-src/boot/memory.py
-touch ~/boot-src/requirements.txt
-touch ~/boot-src/Dockerfile.sandbox
-touch ~/boot-src/CLAUDE.md
+touch ~/BootDrive/app/boot/__init__.py
+touch ~/BootDrive/app/boot/main.py
+touch ~/BootDrive/app/boot/config.py
+touch ~/BootDrive/app/boot/security.py
+touch ~/BootDrive/app/boot/telegram.py
+touch ~/BootDrive/app/boot/executor.py
+touch ~/BootDrive/app/boot/session.py
+touch ~/BootDrive/app/boot/memory.py
+touch ~/BootDrive/app/requirements.txt
+touch ~/BootDrive/app/Dockerfile.sandbox
+touch ~/BootDrive/app/CLAUDE.md
 ```
 
 ### 4.9 Create requirements.txt
 
 ```bash
-cat > ~/boot-src/requirements.txt << 'EOF'
+cat > ~/BootDrive/app/requirements.txt << 'EOF'
 python-telegram-bot==21.6
 aiosqlite==0.20.0
 EOF
@@ -193,7 +193,7 @@ Check for latest stable versions before finalizing.
 ### 4.10 Initialize Git Repository (optional but recommended)
 
 ```bash
-cd ~/boot-src
+cd ~/BootDrive/app
 git init
 cat > .gitignore << 'EOF'
 __pycache__/
@@ -214,7 +214,7 @@ This is your backup mechanism. Optionally push to a private repo.
 ### 4.11 Set Up Python Virtual Environment
 
 ```bash
-cd ~/boot-src
+cd ~/BootDrive/app
 python3 -m venv venv
 source venv/bin/activate
 pip install -r requirements.txt
@@ -238,16 +238,16 @@ history -d $(history | grep "BOT_TOKEN\|TOKEN=" | awk '{print $1}') 2>/dev/null
 - [ ] Bot token verified working (getMe API call succeeded)
 - [ ] Your user ID confirmed via getUpdates match
 - [ ] Unauthorized user ID is different from yours (tested with different account)
-- [ ] `~/boot-src/boot/` directory exists with all stub files
-- [ ] `~/boot-data/` exists, permissions `700`, contains `config.env` (permissions `600`)
-- [ ] `~/boot-data/logs/` exists, permissions `700`
-- [ ] `~/boot-workspace/scratch/` exists
+- [ ] `~/BootDrive/app/boot/` directory exists with all stub files
+- [ ] `~/BootDrive/data/` exists, permissions `700`, contains `config.env` (permissions `600`)
+- [ ] `~/BootDrive/data/logs/` exists, permissions `700`
+- [ ] `~/BootDrive/workspace/scratch/` exists
 - [ ] Workspace permissions allow Docker remapped UID access (ACL or permissions set)
 - [ ] `config.env` populated with token, user ID, and paths
 - [ ] `config.env` is NOT in any git repo
 - [ ] `requirements.txt` has pinned dependencies
 - [ ] Python venv created and dependencies installed
-- [ ] Git repo initialized in `~/boot-src/` with proper `.gitignore`
+- [ ] Git repo initialized in `~/BootDrive/app/` with proper `.gitignore`
 - [ ] Test script deleted, bot token not in shell history
 
 ## Outputs for Downstream Phases

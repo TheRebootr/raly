@@ -17,7 +17,7 @@ step-by-step implementation specs.
 - **Boot Container (Debian Bookworm)**: Long-lived Docker container based on
   `node:22-bookworm-slim`. Runs the Python Telegram bot + Claude Code CLI. Has full outbound
   network access. The container IS the security boundary.
-- **Volumes**: `~/boot-workspace` (project files) and `~/boot-data` (SQLite, config) are
+- **Volumes**: `~/BootDrive/workspace` (project files) and `~/BootDrive/data` (SQLite, config) are
   bind-mounted. These are the accepted blast radius — if Boot is compromised, only these
   volumes are affected.
 
@@ -37,13 +37,13 @@ step-by-step implementation specs.
 - Never mount the Docker socket into Boot's container.
 - Never run Boot's container with `--privileged`.
 - Container user must be UID 1000:1000 (matches host user).
-- Resource limits: `--memory=4g --memory-swap=6g --cpus=4 --pids-limit=512`.
+- Resource limits: `--memory=8g --memory-swap=12g --cpus=4 --pids-limit=512`.
 - Security hardening: `--cap-drop ALL --security-opt=no-new-privileges`.
 - Optional: `--read-only` makes the container rootfs immutable (no `pip install`, `apt-get`,
   etc. at runtime). Use for locked-down deployments where all deps are pre-baked in the image.
   Omit for agentic use cases where the assistant needs to install packages on the fly.
 - Tmpfs mounts must use `noexec,nosuid` with size limits (when using `--read-only`).
-- Boot source mounted read-only (`boot-src:/app:ro`).
+- Boot source baked into image via `COPY` (not mounted). Edit on host, rebuild to deploy.
 - Multi-stage Dockerfile: no compilers (gcc, make) in the runtime image.
 
 ### Things That Will Break If You Set Them
@@ -88,9 +88,9 @@ Key phases:
 ## File Locations
 
 ```
-~/boot-workspace/     → Mounted as /workspace in container (project files)
-~/boot-data/          → Mounted as /data in container (SQLite, config, Claude auth)
-~/boot-src/           → Boot source code (Python), built into container image
+~/BootDrive/workspace/     → Mounted as /workspace in container (project files)
+~/BootDrive/data/          → Mounted as /data in container (SQLite, config, Claude auth)
+~/BootDrive/app/           → Boot source code (Python), built into container image
 phases/               → This directory — implementation specs (not deployed)
 ```
 

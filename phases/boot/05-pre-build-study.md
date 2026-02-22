@@ -169,7 +169,7 @@ Questions to answer:
 See also: [`INSPIRATION.md`](INSPIRATION.md) — maps which repo informs which Boot phase.
 
 After completing all study targets, produce a single document:
-`~/boot-src/RESEARCH-NOTES.md`
+`~/BootDrive/app/RESEARCH-NOTES.md`
 
 Structure:
 
@@ -219,7 +219,7 @@ Structure:
 - [ ] Anthropic sandboxing post read: built-in sandbox capabilities documented
 - [ ] Decision made: Docker-only vs Docker+built-in sandbox vs built-in-only
 - [ ] godagoo: systemd service template patterns extracted
-- [ ] RESEARCH-NOTES.md written to ~/boot-src/
+- [ ] RESEARCH-NOTES.md written to ~/BootDrive/app/
 - [ ] All "Patterns to Adopt" have concrete implementation notes
 - [ ] All "Patterns to AVOID" have clear rationale
 

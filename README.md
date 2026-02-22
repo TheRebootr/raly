@@ -8,7 +8,7 @@ This is a learning journal with a name. Not a framework, not a library, not a pr
 
 I wanted to run AI assistants on my own hardware and understand what they can touch. I didn't know much about Linux security or Docker isolation when I started. So I learned, made mistakes, and wrote everything down in the `phases/` directory.
 
-The "security model" is really just Docker flags (`--cap-drop ALL`, `--memory=4g`, `--pids-limit=512`) applied to a specific machine. Docker does the hard work. RALY documents which flags I chose, why, and what I learned along the way — including what I got wrong.
+The "security model" is really just Docker flags (`--cap-drop ALL`, `--memory=8g`, `--pids-limit=512`) applied to a specific machine. Docker does the hard work. RALY documents which flags I chose, why, and what I learned along the way — including what I got wrong.
 
 ## What This Isn't
 
@@ -52,8 +52,8 @@ You (Telegram) ──→ Telegram API ──→ [polling, no inbound ports]
              └── Boot Container (Debian Bookworm)
                    ├── Claude Code CLI (full network for API access)
                    ├── Python bot (Telegram polling + task routing)
-                   ├── Volume: ~/boot-workspace → /workspace
-                   └── Volume: ~/boot-data → /data (SQLite, config)
+                   ├── Volume: ~/BootDrive/workspace → /workspace
+                   └── Volume: ~/BootDrive/data → /data (SQLite, config)
 ```
 
 ### Key Design Decisions
@@ -109,16 +109,16 @@ The project is split into two layers:
 Image:      node:22-bookworm-slim + Python 3.12 + Claude Code CLI
 Build:      Multi-stage (no compilers in runtime image)
 Runtime:    --init (zombie reaping — NON-NEGOTIABLE)
-Memory:     --memory=4g --memory-swap=6g
+Memory:     --memory=8g --memory-swap=12g
 CPU:        --cpus=4
 PIDs:       --pids-limit=512
 User:       --user 1000:1000 (matches host UID)
 Security:   --cap-drop ALL --security-opt=no-new-privileges
 Optional:   --read-only (immutable rootfs — use for locked-down, non-agentic deployments)
 Tmpfs:      /tmp (512MB, noexec) + /home/node (256MB, noexec) — when using --read-only
-Volumes:    ~/boot-workspace:/workspace (projects — blast radius)
-            ~/boot-data:/data (SQLite, config, Claude auth)
-            ~/boot-src:/app:ro (source code — read-only)
+Volumes:    ~/BootDrive/workspace:/workspace (projects — blast radius)
+            ~/BootDrive/data:/data (SQLite, config, Claude auth)
+            Source baked into image (edit on host → rebuild → redeploy)
 Lifecycle:  systemd unit (Restart=always), NOT Docker --restart flag
 NEVER:      --privileged, Docker socket mount
 ```
@@ -131,10 +131,10 @@ L1:  Tailscale SSH (no openssh sshd, WireGuard encrypted)
 L2:  UFW deny-all inbound
 L3:  Sysctl kernel hardening (BPF, ptrace, perf restrictions)
 L4:  Container boundary (isolated filesystem, process namespace, cgroups)
-L5:  Container resource limits (4GB RAM, 4 CPUs, 512 PIDs)
+L5:  Container resource limits (8GB RAM, 4 CPUs, 512 PIDs)
 L6:  No Docker socket, no --privileged, non-root user
 L7:  Capability + privilege hardening (cap-drop ALL, no-new-privileges)
-L8:  Immutable container (read-only rootfs, noexec tmpfs, source read-only)
+L8:  Immutable container (read-only rootfs, noexec tmpfs, source baked into image)
 L9:  Multi-stage image (no compilers in runtime)
 L10: Auth middleware + input validation (inside Boot)
 L11: Telegram allowlist (single numeric user ID)

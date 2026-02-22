@@ -8,7 +8,7 @@ do not touch daemon config — Omarchy owns it entirely.
 
 Boot lives inside a single long-lived Docker container (Debian Bookworm). The container
 runs the Python Telegram bot and Claude Code CLI with full network access. The container
-boundary is the security boundary. Mounted volumes (`~/boot-workspace`, `~/boot-data`)
+boundary is the security boundary. Mounted volumes (`~/BootDrive/workspace`, `~/BootDrive/data`)
 are the accepted blast radius.
 
 This phase:
@@ -119,13 +119,13 @@ container rebuilds and are the accepted blast radius.
 
 ```bash
 # Project workspace — Claude Code works here
-mkdir -p ~/boot-workspace
+mkdir -p ~/BootDrive/workspace
 
 # Persistent data — SQLite, config, Claude auth
-mkdir -p ~/boot-data
+mkdir -p ~/BootDrive/data
 
 # Boot source code — Python application
-mkdir -p ~/boot-src
+mkdir -p ~/BootDrive/app
 
 # Verify ownership (must be UID 1000 to match container user)
 ls -la ~ | grep boot
@@ -134,12 +134,12 @@ ls -la ~ | grep boot
 Set permissions:
 
 ```bash
-chmod 750 ~/boot-workspace ~/boot-data ~/boot-src
+chmod 750 ~/BootDrive/workspace ~/BootDrive/data ~/BootDrive/app
 ```
 
 ### 2.6 Create `.dockerignore`
 
-Create `~/boot-src/.dockerignore` to keep the build context clean:
+Create `~/BootDrive/app/.dockerignore` to keep the build context clean:
 
 ```
 .git
@@ -148,11 +148,11 @@ __pycache__
 .env
 ```
 
-Without this, `docker build` copies everything in `~/boot-src` into the build context.
+Without this, `docker build` copies everything in `~/BootDrive/app` into the build context.
 
 ### 2.7 Build Boot Container Image
 
-Create the Dockerfile at `~/boot-src/Dockerfile`:
+Create the Dockerfile at `~/BootDrive/app/Dockerfile`:
 
 ```dockerfile
 # =============================================================================
@@ -217,9 +217,8 @@ ENV PATH="/opt/boot-venv/bin:$PATH"
 
 WORKDIR /app
 
-# Boot application will be mounted or copied here
-# During development: -v ~/boot-src:/app:ro
-# For production: COPY . /app (deps already in /opt/boot-venv)
+# Boot application source is baked into the image via COPY.
+# To update: edit on host → docker compose build → docker compose up -d
 
 # Entrypoint: the Boot Python application
 # Will be set once the application code exists (Phase 5.x)
@@ -250,7 +249,7 @@ in the build stage uncommented.
 Build the image:
 
 ```bash
-cd ~/boot-src
+cd ~/BootDrive/app
 docker build -t boot:latest .
 ```
 
@@ -328,18 +327,18 @@ Note: `--restart` is NOT used here — in production, systemd manages restarts.
 docker run -d \
   --name boot-test \
   --init \
-  --memory=4g \
-  --memory-swap=6g \
+  --memory=8g \
+  --memory-swap=12g \
   --cpus=4 \
   --pids-limit=512 \
   --user 1000:1000 \
   --security-opt=no-new-privileges \
   --cap-drop ALL \
-  -v ~/boot-workspace:/workspace \
-  -v ~/boot-data:/data \
-  -v ~/boot-src:/app:ro \
+  -v ~/BootDrive/workspace:/workspace \
+  -v ~/BootDrive/data:/data \
   boot:latest \
   sleep infinity
+  # Source is baked into image — no /app mount needed
   # Optional: add --read-only for locked-down deployments (see "Container Security Model")
 
 # Verify it's running
@@ -347,11 +346,11 @@ docker ps --filter name=boot-test
 
 # Verify resource limits are applied
 docker inspect boot-test --format '{{.HostConfig.Memory}}'
-# Should show: 4294967296 (4GB in bytes)
+# Should show: 8589934592 (8GB in bytes)
 
 # Verify memory swap limit
 docker inspect boot-test --format '{{.HostConfig.MemorySwap}}'
-# Should show: 6442450944 (6GB in bytes)
+# Should show: 12884901888 (12GB in bytes)
 
 # Verify security options
 docker inspect boot-test --format '{{.HostConfig.SecurityOpt}}'
@@ -385,9 +384,9 @@ docker exec boot-test sh -c 'cp /usr/bin/id /tmp/id && /tmp/id' 2>&1
 docker exec boot-test touch /usr/test 2>&1
 # Should show: Read-only file system
 
-# Verify /app is read-only (boot-src mounted :ro)
-docker exec boot-test touch /app/test 2>&1
-# Should show: Read-only file system
+# Verify /app contains baked-in source (not mounted)
+docker exec boot-test ls /app/src/index.ts
+# Should show the file — source is baked into the image
 
 # Verify network works (outbound)
 docker exec boot-test curl -s -o /dev/null -w "%{http_code}" https://api.anthropic.com
@@ -433,18 +432,17 @@ ExecStartPre=-/usr/bin/docker rm boot
 ExecStart=/usr/bin/docker run \
   --name boot \
   --init \
-  --memory=4g \
-  --memory-swap=6g \
+  --memory=8g \
+  --memory-swap=12g \
   --cpus=4 \
   --pids-limit=512 \
   --user 1000:1000 \
   --security-opt=no-new-privileges \
   --cap-drop ALL \
-  -v /home/YOUR_USER/boot-workspace:/workspace \
-  -v /home/YOUR_USER/boot-data:/data \
-  -v /home/YOUR_USER/boot-src:/app:ro \
-  boot:latest \
-  python3 /app/boot/main.py
+  -v /home/YOUR_USER/BootDrive/workspace:/workspace \
+  -v /home/YOUR_USER/BootDrive/data:/data \
+  boot:latest
+  # Source is baked into the image — no /app mount needed
   # Optional: add --read-only + tmpfs mounts for locked-down deployments (see below)
 
 ExecStop=/usr/bin/docker stop -t 30 boot
@@ -456,11 +454,9 @@ WantedBy=multi-user.target
 **Notes:**
 
 - `--restart` is NOT used — systemd manages restarts via `Restart=always`.
-- `boot-src:/app:ro` — Boot's source code is mounted read-only. The container cannot
-  modify its own harness code. If you want Claude Code to edit Boot's source (self-modification),
-  remove `:ro` — but understand the implication: the AI can rewrite its own control harness.
+- Source code is baked into the image via `COPY` — no `/app` volume mount. The container
+  cannot modify source on the host. To update: edit on host → `docker compose build` → redeploy.
 - `--read-only` is optional. See "Container Security Model" below for when to use it.
-- In production, the code would be COPYed into the image and the `boot-src` mount removed.
 
 Enable but do NOT start yet (Boot application code doesn't exist until Phase 5.x):
 
@@ -483,15 +479,15 @@ Boot's container runs with these constraints:
 | Constraint            | Value                 | Purpose                                                    |
 | --------------------- | --------------------- | ---------------------------------------------------------- |
 | `--init`              | tini as PID 1         | Zombie reaping + signal forwarding                         |
-| `--memory=4g`         | Hard limit            | OOM-killed if exceeded, protects host                      |
-| `--memory-swap=6g`    | Swap limit            | 2GB swap buffer for peaks                                  |
+| `--memory=8g`         | Hard limit            | OOM-killed if exceeded, protects host                      |
+| `--memory-swap=12g`    | Swap limit            | 4GB swap buffer for peaks                                  |
 | `--cpus=4`            | CPU quota             | Reserves 2 host cores for desktop                          |
 | `--pids-limit=512`    | Process limit         | Fork bomb protection                                       |
 | `--user 1000:1000`    | Non-root              | Matches host UID, no privilege inside                      |
 | `--no-new-privileges` | Security option       | Blocks setuid/setgid privilege escalation                  |
 | `--cap-drop ALL`      | Drop all capabilities | No Linux capabilities (NET_RAW, MKNOD, etc.)               |
 | Volumes               | workspace + data only | Blast radius is these two directories                      |
-| `boot-src:/app:ro`    | Read-only source      | Boot cannot modify its own harness code                    |
+| Source baked via COPY      | Immutable source      | No /app mount — container can't modify source on host      |
 | Network               | Default bridge        | Full outbound (needed for Anthropic API, package installs) |
 
 **What the container CANNOT do:**
@@ -499,9 +495,9 @@ Boot's container runs with these constraints:
 - Access the Docker socket (not mounted)
 - Access host filesystem outside mounted volumes
 - Escalate to root (no sudo, non-root user, no-new-privileges, all caps dropped)
-- Modify its own harness source code (boot-src mounted read-only)
+- Modify its own harness source code on the host (source baked into image, no mount)
 - Use raw sockets, mknod, or any Linux capability (all dropped)
-- Consume more than 4GB RAM / 4 CPUs
+- Consume more than 8GB RAM / 4 CPUs
 - Survive `docker stop boot` (kill switch)
 
 **What the container CAN do (by design):**
@@ -513,7 +509,7 @@ Boot's container runs with these constraints:
 
 ### Accepted tradeoff: credentials and state share one volume
 
-`~/boot-data` holds both secrets (Telegram bot token, Anthropic API key/auth) and
+`~/BootDrive/data` holds both secrets (Telegram bot token, Anthropic API key/auth) and
 mutable state (SQLite databases, session data, config) in a single read-write volume.
 
 If the container is compromised, an attacker has access to both credentials AND can
@@ -527,10 +523,10 @@ We accept the single-volume design because:
 1. The container IS the trust boundary — if it's compromised, credentials are already
    in-memory regardless of mount layout
 2. Splitting adds operational complexity (more mounts, more paths, more to manage)
-3. The blast radius is already accepted — `~/boot-data` is one of two volumes the user
+3. The blast radius is already accepted — `~/BootDrive/data` is one of two volumes the user
    explicitly chose to expose
 
-If your threat model requires credential/state separation, split `~/boot-data` into
+If your threat model requires credential/state separation, split `~/BootDrive/data` into
 `~/boot-secrets` (mounted read-only) and `~/boot-state` (mounted read-write).
 
 ## Ops Concerns
@@ -588,8 +584,8 @@ brings it back. Boot's application must be crash-resilient (SQLite state trackin
 - [x] `/etc/docker/daemon.json` is **unmodified** (matches Omarchy's original)
 - [x] Docker socket permissions: `srw-rw---- root docker`
 - [x] trivy installed and working (`trivy --version`)
-- [x] `.dockerignore` created in `~/boot-src`
-- [x] Host directories created: `~/boot-workspace`, `~/boot-data`, `~/boot-src`
+- [x] `.dockerignore` created in `~/BootDrive/app`
+- [x] Host directories created: `~/BootDrive/workspace`, `~/BootDrive/data`, `~/BootDrive/app`
 - [x] Boot image built successfully (`docker images boot`)
 - [x] Boot image scanned with trivy, vulnerabilities reviewed
 - [x] Test container: starts, runs as UID 1000, volumes accessible, network works
@@ -598,9 +594,9 @@ brings it back. Boot's application must be crash-resilient (SQLite state trackin
 - [x] Test container: `no-new-privileges` security option confirmed
 - [x] Test container: all capabilities dropped (`--cap-drop ALL`)
 - [x] Test container: read-only rootfs confirmed, /tmp writable, rootfs writes fail
-- [x] Test container: `/app` read-only confirmed (boot-src mounted `:ro`)
+- [x] Test container: `/app` source baked into image (no mount, container can't modify host source)
 - [x] Test container: noexec on /tmp confirmed (binary execution fails)
-- [x] Test container: memory swap limit confirmed (`MemorySwap` = 6442450944)
+- [x] Test container: memory swap limit confirmed (`MemorySwap` = 12884901888)
 - [ ] systemd unit created and enabled (but not started) — deferred to Phase 5.x (no app code yet)
 - [ ] systemd unit uses absolute paths (no `~`, correct username) — deferred to Phase 5.x
 - [x] Test artifacts cleaned up
@@ -609,7 +605,7 @@ brings it back. Boot's application must be crash-resilient (SQLite state trackin
 
 - Docker service enabled → Boot container can start at boot
 - `boot:latest` image → Boot application will run inside this
-- Host directories → Phase 4 (Telegram bot token stored in `~/boot-data`)
+- Host directories → Phase 4 (Telegram bot token stored in `~/BootDrive/data`)
 - systemd unit → Phase 5.x (start the unit once application code exists)
 - trivy available → Phase 7 (periodic image rescanning)
 

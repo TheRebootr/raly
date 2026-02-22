@@ -84,7 +84,7 @@ container. Every key pre-answers an interactive dialog that would hang in a non-
 context:
 
 ```bash
-cat > ~/boot-data/.claude.json << 'EOF'
+cat > ~/BootDrive/data/.claude.json << 'EOF'
 {
   "hasCompletedOnboarding": true,
   "hasAcknowledgedDangerousPermissions": true,
@@ -108,7 +108,7 @@ Since `~/.claude/` is bind-mounted rw into the container, this file will be visi
 
 ### 4.3 Create POC Environment File
 
-Create `~/boot-data/.env.poc`:
+Create `~/BootDrive/data/.env.poc`:
 
 ```bash
 TELEGRAM_BOT_TOKEN=<your-bot-token>
@@ -137,11 +137,11 @@ credentials mounted from `~/.claude/` instead.
 `ANTHROPIC_API_KEY=<your-key>` to use the Python SDK directly. This avoids the CLI
 subprocess overhead and doesn't require mounting credentials.
 
-**Security note**: This file contains secrets. It lives on the `boot-data` volume
+**Security note**: This file contains secrets. It lives on the `BootDrive/data` volume
 (the accepted blast radius). Don't commit it to git.
 
 ```bash
-chmod 600 ~/boot-data/.env.poc
+chmod 600 ~/BootDrive/data/.env.poc
 ```
 
 ---
@@ -160,17 +160,17 @@ for locked-down deployments — see Phase 2, "Optional: `--read-only` mode".
 docker run -it \
   --name boot-poc \
   --init \
-  --memory=4g \
-  --memory-swap=6g \
+  --memory=8g \
+  --memory-swap=12g \
   --cpus=4 \
   --pids-limit=512 \
   --user 1000:1000 \
   --security-opt=no-new-privileges \
   --cap-drop ALL \
-  -v ~/boot-workspace:/workspace \
-  -v ~/boot-data:/data \
+  -v ~/BootDrive/workspace:/workspace \
+  -v ~/BootDrive/data:/data \
   -v ~/.claude:/home/node/.claude \
-  -v ~/boot-data/.claude.json:/home/node/.claude.json \
+  -v ~/BootDrive/data/.claude.json:/home/node/.claude.json \
   boot:latest \
   bash
 ```
@@ -180,7 +180,7 @@ docker run -it \
 - `~/.claude:/home/node/.claude` — OAuth tokens from `claude /login`. Mounted read-write
   so the CLI can refresh expired access tokens (they expire every 8-12 hours). Both host
   and container use UID 1000, so permissions align.
-- `~/boot-data/.claude.json:/home/node/.claude.json` — Global state (onboarding bypass,
+- `~/BootDrive/data/.claude.json:/home/node/.claude.json` — Global state (onboarding bypass,
   startup counters, etc.). Must be **read-write** — the CLI writes to this file at startup
   and silently hangs if it can't.
 
@@ -255,7 +255,7 @@ Open Telegram and message your bot:
 1. Send "hello" → should get a response
 2. Send "what directory are you in?" → should report `/workspace/projects` or similar
 3. Send "create a file called test.txt with hello world" → should create it
-4. Verify from host: `ls ~/boot-workspace/projects/test.txt`
+4. Verify from host: `ls ~/BootDrive/workspace/projects/test.txt`
 
 **If this works — your security boundary is validated with a real workload.**
 
@@ -295,8 +295,8 @@ ls /home/therebootr/        # → No such file or directory
 ls /var/run/docker.sock     # → No such file or directory
 
 # Only mounted volumes show host content
-ls /workspace               # → your project files from ~/boot-workspace
-ls /data                    # → config/SQLite from ~/boot-data
+ls /workspace               # → your project files from ~/BootDrive/workspace
+ls /data                    # → config/SQLite from ~/BootDrive/data
 ```
 
 **Why this matters:** The container's `/etc/shadow` is the _image's_ shadow file (Debian
@@ -346,16 +346,16 @@ cat /proc/1/comm
 
 ### 6.4 Resource Limits
 
-Tests: `--memory=4g`, `--memory-swap=6g`, `--cpus=4`, `--pids-limit=512`.
+Tests: `--memory=8g`, `--memory-swap=12g`, `--cpus=4`, `--pids-limit=512`.
 
 From inside the container (Arch uses cgroup v2 by default):
 
 ```bash
 # Memory limit (cgroup v2)
 cat /sys/fs/cgroup/memory.max
-# → 4294967296 (4GB)
+# → 8589934592 (8GB)
 
-# Swap limit = memory-swap minus memory = 2GB swap
+# Swap limit = memory-swap minus memory = 4GB swap
 cat /sys/fs/cgroup/memory.swap.max
 # → 2147483648 (2GB)
 
@@ -389,8 +389,8 @@ touch /opt/test.txt               # → succeeds (writable rootfs)
 From the host — verify only the expected directories are affected:
 
 ```bash
-ls ~/boot-workspace/scope-test.txt    # → exists, owned by UID 1000
-ls ~/boot-data/scope-test.txt         # → exists, owned by UID 1000
+ls ~/BootDrive/workspace/scope-test.txt    # → exists, owned by UID 1000
+ls ~/BootDrive/data/scope-test.txt         # → exists, owned by UID 1000
 
 # Credential mount is read-write (needed for token refresh)
 ls -la ~/.claude/                     # → confirm files not unexpectedly modified
@@ -412,7 +412,7 @@ touch /workspace/permission-test.txt
 From the host, verify ownership:
 
 ```bash
-ls -la ~/boot-workspace/permission-test.txt
+ls -la ~/BootDrive/workspace/permission-test.txt
 # → should be owned by your user (UID 1000), not root
 ```
 
@@ -509,7 +509,7 @@ Check:
 
 - Container status: `docker ps -a --filter name=boot-poc`
   (Expected: Exited — no `--restart` flag in POC)
-- Is SQLite data intact? `ls -la ~/boot-data/bot.db`
+- Is SQLite data intact? `ls -la ~/BootDrive/data/bot.db`
 - Manual recovery: `docker start boot-poc && docker exec -it boot-poc bash`
   then re-run bot startup from Step 5.4
 
@@ -536,8 +536,8 @@ Tests graceful degradation when the container is killed during active Claude pro
 
 1. Send a complex message to the bot via Telegram (something that takes 30+ seconds)
 2. While Claude is processing: `docker stop boot-poc`
-3. Check data integrity: `sqlite3 ~/boot-data/bot.db ".tables"` (no corruption)
-4. Check workspace: `ls ~/boot-workspace/` (no partial/corrupted files)
+3. Check data integrity: `sqlite3 ~/BootDrive/data/bot.db ".tables"` (no corruption)
+4. Check workspace: `ls ~/BootDrive/workspace/` (no partial/corrupted files)
 5. Start the container and verify the bot recovers: start it, re-run bot, send a message
 
 **What we're validating:** SQLite handles interrupted writes via WAL journaling.
@@ -607,9 +607,9 @@ Once validated and ready to move on:
 
 ```bash
 docker stop boot-poc && docker rm boot-poc
-rm -rf ~/boot-workspace/poc-bot       # remove RichardAtCT's code
-rm ~/boot-data/.env.poc               # remove POC config
-# Keep ~/boot-workspace, ~/boot-data, ~/boot-src — these are production dirs
+rm -rf ~/BootDrive/workspace/poc-bot       # remove RichardAtCT's code
+rm ~/BootDrive/data/.env.poc               # remove POC config
+# Keep ~/BootDrive/workspace, ~/BootDrive/data, ~/BootDrive/app — these are production dirs
 ```
 
 The `boot:latest` image stays — it's your production image. The systemd unit is

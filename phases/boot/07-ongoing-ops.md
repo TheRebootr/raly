@@ -20,8 +20,8 @@ runbook.
 | Task | Command | What to Check |
 |------|---------|---------------|
 | System updates | `sudo pacman -Syu` | Check https://archlinux.org/news/ FIRST for breaking changes |
-| Review audit logs | `sqlite3 ~/boot-data/boot.db "SELECT * FROM audit_log WHERE action='auth_rejected' AND timestamp > datetime('now', '-7 days');"` | Any unauthorized access attempts |
-| Review health check logs | `cat ~/boot-data/logs/health.log \| tail -20` | Any health check failures |
+| Review audit logs | `sqlite3 ~/BootDrive/data/boot.db "SELECT * FROM audit_log WHERE action='auth_rejected' AND timestamp > datetime('now', '-7 days');"` | Any unauthorized access attempts |
+| Review health check logs | `cat ~/BootDrive/data/logs/health.log \| tail -20` | Any health check failures |
 | Check Tailscale status | `tailscale status` | All devices expected, no unknown devices |
 | Check service status | `systemctl status boot.service` | Active, no restart loops |
 | Check disk space | `df -h` | Under 80% usage |
@@ -30,7 +30,7 @@ runbook.
 
 | Task | Command | What to Check |
 |------|---------|---------------|
-| Dependency audit | `cd ~/boot-src && source venv/bin/activate && pip audit` | No known CVEs in 3 dependencies |
+| Dependency audit | `cd ~/BootDrive/app && source venv/bin/activate && pip audit` | No known CVEs in 3 dependencies |
 | Rebuild sandbox image | See "Image Rebuild" section below | Pick up base image security patches |
 | Review Tailscale devices | https://login.tailscale.com/admin/machines | Revoke any unexpected devices |
 | Rotate audit logs | Automatic via boot-log-rotate.timer | Verify old logs compressed, ancient logs deleted |
@@ -72,7 +72,7 @@ docker info
 You own this code. Updates are your commits.
 
 ```bash
-cd ~/boot-src
+cd ~/BootDrive/app
 
 # Make changes
 # ...
@@ -96,7 +96,7 @@ git commit -m "description of change"
 ### Dependency Update
 
 ```bash
-cd ~/boot-src
+cd ~/BootDrive/app
 source venv/bin/activate
 
 # Check for CVEs
@@ -118,7 +118,7 @@ sudo systemctl restart boot.service
 ### Sandbox Image Rebuild
 
 ```bash
-cd ~/boot-src
+cd ~/BootDrive/app
 
 # Pull latest base
 docker pull python:3.12-slim
@@ -165,23 +165,23 @@ sysctl kernel.dmesg_restrict kernel.kptr_restrict
 
 | Path | Contents | Priority | Method |
 |------|----------|----------|--------|
-| `~/boot-src/` | Your harness code | Critical | Git push to private repo |
-| `~/boot-data/boot.db` | Sessions, audit log, conversation history | High | `cp` or `sqlite3 .backup` |
-| `~/boot-data/config.env` | Secrets | Critical | Encrypted backup only |
-| `~/boot-workspace/` | Active project files | Medium | Per-project git repos |
+| `~/BootDrive/app/` | Your harness code | Critical | Git push to private repo |
+| `~/BootDrive/data/boot.db` | Sessions, audit log, conversation history | High | `cp` or `sqlite3 .backup` |
+| `~/BootDrive/data/config.env` | Secrets | Critical | Encrypted backup only |
+| `~/BootDrive/workspace/` | Active project files | Medium | Per-project git repos |
 
 ### Backup Commands
 
 ```bash
 # Backup database (hot backup, safe while Boot is running)
-sqlite3 ~/boot-data/boot.db ".backup '/tmp/boot-backup-$(date +%Y%m%d).db'"
+sqlite3 ~/BootDrive/data/boot.db ".backup '/tmp/boot-backup-$(date +%Y%m%d).db'"
 
 # Push code to private repo
-cd ~/boot-src
+cd ~/BootDrive/app
 git push origin main
 
 # Backup config (encrypt first)
-gpg --symmetric --cipher-algo AES256 -o /tmp/config-backup.env.gpg ~/boot-data/config.env
+gpg --symmetric --cipher-algo AES256 -o /tmp/config-backup.env.gpg ~/BootDrive/data/config.env
 ```
 
 ### What NOT to Backup
@@ -209,11 +209,11 @@ sudo ip link set wlan0 down
 sudo ip link set enp0s31f6 down
 
 # 4. Preserve evidence (before modifying anything)
-cp ~/boot-data/boot.db ~/boot-data/boot-incident-$(date +%Y%m%d%H%M).db
-cp -r ~/boot-data/logs ~/boot-data/logs-incident-$(date +%Y%m%d%H%M)
+cp ~/BootDrive/data/boot.db ~/BootDrive/data/boot-incident-$(date +%Y%m%d%H%M).db
+cp -r ~/BootDrive/data/logs ~/BootDrive/data/logs-incident-$(date +%Y%m%d%H%M)
 
 # 5. Review audit log
-sqlite3 ~/boot-data/boot.db "
+sqlite3 ~/BootDrive/data/boot.db "
     SELECT timestamp, action, user_id, detail, result
     FROM audit_log
     ORDER BY timestamp DESC
@@ -221,8 +221,8 @@ sqlite3 ~/boot-data/boot.db "
 "
 
 # 6. Check for unexpected files
-find ~/boot-workspace -name "*.sh" -o -name "*.py" -newer ~/boot-data/boot.db | head -20
-ls -la ~/boot-workspace/*/
+find ~/BootDrive/workspace -name "*.sh" -o -name "*.py" -newer ~/BootDrive/data/boot.db | head -20
+ls -la ~/BootDrive/workspace/*/
 
 # 7. Check for unexpected processes
 ps aux | grep -v "^\[" | grep -v "grep"
@@ -238,7 +238,7 @@ sudo ss -tnp
 # - Tailscale: deauthorize Mac Mini, re-authorize with fresh key
 
 # 10. Update config.env with new credentials
-# 11. Review ~/boot-workspace/ for unauthorized modifications
+# 11. Review ~/BootDrive/workspace/ for unauthorized modifications
 # 12. Rebuild sandbox image from scratch
 # 13. Restart services
 # 14. Run full Phase 6 verification
@@ -261,7 +261,7 @@ journalctl -u boot.service | grep "Started\|Stopped\|Failed" | tail -20
 # If dependency issue: recreate venv, reinstall deps, restart
 
 # Manual test run (outside systemd, see stdout directly):
-cd ~/boot-src
+cd ~/BootDrive/app
 source venv/bin/activate
 python -m boot.main
 # Watch output for errors
@@ -271,21 +271,21 @@ python -m boot.main
 
 ```bash
 # Check integrity
-sqlite3 ~/boot-data/boot.db "PRAGMA integrity_check;"
+sqlite3 ~/BootDrive/data/boot.db "PRAGMA integrity_check;"
 
 # If corrupt:
 # 1. Stop Boot
 sudo systemctl stop boot.service
 
 # 2. Attempt repair
-sqlite3 ~/boot-data/boot.db ".recover" | sqlite3 ~/boot-data/boot-recovered.db
+sqlite3 ~/BootDrive/data/boot.db ".recover" | sqlite3 ~/BootDrive/data/boot-recovered.db
 
 # 3. If recovery works:
-mv ~/boot-data/boot.db ~/boot-data/boot-corrupt.db
-mv ~/boot-data/boot-recovered.db ~/boot-data/boot.db
+mv ~/BootDrive/data/boot.db ~/BootDrive/data/boot-corrupt.db
+mv ~/BootDrive/data/boot-recovered.db ~/BootDrive/data/boot.db
 
 # 4. If recovery fails, start fresh (lose history):
-rm ~/boot-data/boot.db
+rm ~/BootDrive/data/boot.db
 # Boot will recreate tables on next start
 
 # 5. Restart
@@ -297,7 +297,7 @@ sudo systemctl start boot.service
 ```bash
 # Identify largest consumers
 du -sh ~/* | sort -rh | head -10
-du -sh ~/boot-data/logs/* | sort -rh
+du -sh ~/BootDrive/data/logs/* | sort -rh
 docker system df
 
 # Clean up
@@ -306,11 +306,11 @@ docker system prune -f
 docker image prune -a -f
 
 # Old logs:
-find ~/boot-data/logs -name "*.log.gz" -mtime +7 -delete
+find ~/BootDrive/data/logs -name "*.log.gz" -mtime +7 -delete
 
 # Old audit entries:
-sqlite3 ~/boot-data/boot.db "DELETE FROM audit_log WHERE timestamp < datetime('now', '-7 days');"
-sqlite3 ~/boot-data/boot.db "VACUUM;"
+sqlite3 ~/BootDrive/data/boot.db "DELETE FROM audit_log WHERE timestamp < datetime('now', '-7 days');"
+sqlite3 ~/BootDrive/data/boot.db "VACUUM;"
 ```
 
 ## 7.5 Monitoring Summary

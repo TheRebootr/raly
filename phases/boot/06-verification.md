@@ -134,7 +134,7 @@ Execution:
 # Verify: Boot responds
 
 # SEC-03
-sqlite3 ~/boot-data/boot.db "SELECT action, user_id, result FROM audit_log ORDER BY timestamp DESC LIMIT 10;"
+sqlite3 ~/BootDrive/data/boot.db "SELECT action, user_id, result FROM audit_log ORDER BY timestamp DESC LIMIT 10;"
 # Should show auth_rejected for SEC-01 and auth_ok for SEC-02
 
 # SEC-04: From your account, send 20 messages rapidly
@@ -168,7 +168,7 @@ sqlite3 ~/boot-data/boot.db "SELECT action, user_id, result FROM audit_log ORDER
 # Verify: shows status info
 
 # SEC-14
-sqlite3 ~/boot-data/boot.db "SELECT timestamp, action, detail, result FROM audit_log ORDER BY timestamp DESC LIMIT 30;"
+sqlite3 ~/BootDrive/data/boot.db "SELECT timestamp, action, detail, result FROM audit_log ORDER BY timestamp DESC LIMIT 30;"
 ```
 
 ### 6.4 Persistence Test
@@ -183,7 +183,7 @@ PER-02  | (after reboot) systemctl status boot.service | active (running)
 PER-03  | (after reboot) tailscale status | connected
 PER-04  | (after reboot) Send Telegram message | Boot responds
 PER-05  | (after reboot) SSH via Tailscale | Works
-PER-06  | (after reboot) sqlite3 ~/boot-data/boot.db "SELECT count(*) FROM audit_log;" | Non-zero (data preserved)
+PER-06  | (after reboot) sqlite3 ~/BootDrive/data/boot.db "SELECT count(*) FROM audit_log;" | Non-zero (data preserved)
 PER-07  | (after reboot) /pwd | Shows last active project (session preserved)
 ```
 
@@ -208,7 +208,7 @@ tailscale status
 # PER-05: Already verified by SSH above
 
 # PER-06
-sqlite3 ~/boot-data/boot.db "SELECT count(*) FROM audit_log;"
+sqlite3 ~/BootDrive/data/boot.db "SELECT count(*) FROM audit_log;"
 
 # PER-07: Send "/pwd" via Telegram
 ```
@@ -220,12 +220,12 @@ End-to-end test of the actual use case: working on a project via Telegram.
 ```
 Test ID | Test | Expected
 --------|------|--------
-OPS-01  | mkdir ~/boot-workspace/test-project | Directory created
-OPS-02  | echo "print('hello')" > ~/boot-workspace/test-project/test.py | File created
+OPS-01  | mkdir ~/BootDrive/workspace/test-project | Directory created
+OPS-02  | echo "print('hello')" > ~/BootDrive/workspace/test-project/test.py | File created
 OPS-03  | /cd test-project | Switched to test-project
 OPS-04  | "List all files in the project" | Shows test.py
 OPS-05  | "Create a README.md with a description of this project" | README.md created
-OPS-06  | ls ~/boot-workspace/test-project/ | Shows test.py and README.md
+OPS-06  | ls ~/BootDrive/workspace/test-project/ | Shows test.py and README.md
 OPS-07  | /cd scratch | Switched to scratch
 OPS-08  | /pwd | Shows scratch
 OPS-09  | /cd test-project | Switched back to test-project
@@ -237,7 +237,7 @@ OPS-13  | "What files are in this project?" | Shows test.py and README.md (fresh
 
 ## Results Documentation
 
-Create `~/boot-data/verification-results.md` with results:
+Create `~/BootDrive/data/verification-results.md` with results:
 
 ```markdown
 # RALY Verification Results
@@ -277,7 +277,7 @@ Operational tests (OPS-*) are important but non-blocking if infrastructure tests
 - [ ] All SEC-* tests pass (application security confirmed)
 - [ ] All PER-* tests pass (persistence confirmed)
 - [ ] All OPS-* tests pass (operational workflow confirmed)
-- [ ] Verification results documented in `~/boot-data/verification-results.md`
+- [ ] Verification results documented in `~/BootDrive/data/verification-results.md`
 - [ ] Any failures documented with remediation plan
 - [ ] No CRITICAL or HIGH severity failures remain unresolved
 

@@ -71,8 +71,8 @@ Mac Mini (Omarchy 3.x) ← Tailscale SSH (no openssh sshd)
         │     ├── telegram.py (message handling, routing)
         │     ├── executor.py (subprocess → claude CLI, no sub-containers)
         │     └── session.py + memory.py (SQLite state)
-        ├── Volume: ~/boot-workspace → /workspace (projects, blast radius)
-        └── Volume: ~/boot-data → /data (SQLite, config, Claude auth)
+        ├── Volume: ~/BootDrive/workspace → /workspace (projects, blast radius)
+        └── Volume: ~/BootDrive/data → /data (SQLite, config, Claude auth)
 ```
 
 ## Boot Container Specification
@@ -81,16 +81,16 @@ Mac Mini (Omarchy 3.x) ← Tailscale SSH (no openssh sshd)
 Image base: node:22-bookworm-slim (Debian Bookworm, LTS until 2028)
 Build:      Multi-stage (build-essential in build stage only, not in runtime)
 Runtime:    --init (tini, zombie reaping + signal forwarding — NON-NEGOTIABLE)
-Memory:     --memory=4g --memory-swap=6g
+Memory:     --memory=8g --memory-swap=12g
 CPU:        --cpus=4 (reserves 2 host cores for desktop)
 PIDs:       --pids-limit=512
 User:       --user 1000:1000 (matches host UID)
 Security:   --cap-drop ALL --security-opt=no-new-privileges
 Optional:   --read-only (immutable rootfs — use for locked-down, non-agentic deployments)
 Tmpfs:      /tmp (512MB, noexec) + /home/node (256MB, noexec) — when using --read-only
-Volumes:    ~/boot-workspace:/workspace (project files — accepted blast radius)
-            ~/boot-data:/data (SQLite, config, Claude auth credentials)
-            ~/boot-src:/app:ro (Boot source code — read-only)
+Volumes:    ~/BootDrive/workspace:/workspace (project files — accepted blast radius)
+            ~/BootDrive/data:/data (SQLite, config, Claude auth credentials)
+            Source baked into image (edit on host → rebuild → redeploy)
 Network:    default bridge (full outbound, no inbound ports needed)
 Lifecycle:  systemd unit (Restart=always), NOT --restart flag
 NOT:        --privileged, Docker socket mount, --network none
@@ -123,10 +123,10 @@ L1:  Tailscale SSH — no openssh sshd, no inbound ports, WireGuard encrypted
 L2:  UFW deny-all inbound + ufw-docker bypass prevention (Omarchy managed)
 L3:  Sysctl kernel hardening (BPF, ptrace, perf restrictions)
 L4:  Boot container boundary (isolated filesystem, process namespace, cgroups)
-L5:  Container resource limits (4GB RAM, 4 CPUs, 512 PIDs)
+L5:  Container resource limits (8GB RAM, 4 CPUs, 512 PIDs)
 L6:  Container restrictions (no Docker socket, no --privileged, non-root user)
 L7:  Capability + privilege hardening (cap-drop ALL, no-new-privileges)
-L8:  Immutable container (read-only rootfs, noexec tmpfs, source mounted read-only)
+L8:  Immutable container (read-only rootfs, noexec tmpfs, source baked into image)
 L9:  Multi-stage image (no compilers in runtime — gcc/make removed)
 L10: Auth middleware + input validation (inside Boot)
 L11: Telegram allowlist (single numeric ID)

@@ -10,9 +10,9 @@ credentials.json
 .claude.json
 
 # Boot runtime (not part of the repo)
-boot-workspace/
-boot-data/
-boot-src/
+BootDrive/workspace/
+BootDrive/data/
+BootDrive/app/
 
 # OS
 .DS_Store
