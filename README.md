@@ -49,11 +49,17 @@ You (Telegram) ──→ Telegram API ──→ [polling, no inbound ports]
              ├── Sysctl hardening (99-raly.conf)
              ├── LUKS full-disk encryption
              │
-             └── Boot Container (Debian Bookworm)
-                   ├── Claude Code CLI (via Agent SDK, full network for API access)
-                   ├── TypeScript/Bun bot (Telegram polling + multi-input handling)
-                   ├── Volume: ~/BootDrive/workspace → /workspace
-                   └── Volume: ~/BootDrive/data → /data (SQLite, config)
+             ├── Boot Container (Debian Bookworm)
+             │     ├── Claude Code CLI (via Agent SDK, full network for API access)
+             │     ├── TypeScript/Bun bot (Telegram polling + multi-input handling)
+             │     ├── Volume: ~/BootDrive/workspace → /workspace
+             │     └── Volume: ~/BootDrive/data → /data (SQLite, config)
+             │
+             └── SilverBullet Container (Deno/Debian)
+                   ├── PWA markdown editor (browse/edit workspace from phone)
+                   ├── Tailscale-only access (100.x.x.x:3000)
+                   ├── read-only rootfs, isolated network, shell disabled
+                   └── Volume: ~/BootDrive/workspace → /space (shared with Boot)
 ```
 
 ### Key Design Decisions
@@ -103,7 +109,9 @@ The project is split into two layers:
 | [Phase 6](phases/boot/06-verification.md)         | Full verification                                   | Planned |
 | [Phase 7](phases/boot/07-ongoing-ops.md)          | Ongoing operations reference                        | Planned |
 
-## Container Spec
+## Container Specs
+
+### Boot (AI assistant)
 
 ```
 Image:      node:22-bookworm-slim + Bun 1.3.9 + Claude Code CLI
@@ -121,6 +129,24 @@ Volumes:    ~/BootDrive/workspace:/workspace (projects — blast radius)
             Source baked into image (edit on host → rebuild → redeploy)
 Lifecycle:  systemd unit (Restart=always), NOT Docker --restart flag
 NEVER:      --privileged, Docker socket mount
+```
+
+### SilverBullet (mobile markdown editor)
+
+```
+Image:      ghcr.io/silverbulletmd/silverbullet:0.9.4 (pinned)
+Runtime:    --init, --read-only
+Memory:     --memory=512m --memory-swap=768m
+CPU:        --cpus=1
+PIDs:       --pids-limit=64
+User:       --user 1000:1000
+Security:   --cap-drop ALL --security-opt=no-new-privileges
+Tmpfs:      /tmp (64MB, noexec) + /deno-dir (128MB, noexec)
+Volume:     ~/BootDrive/workspace:/space (shared with Boot)
+Port:       Tailscale IP only (not 0.0.0.0 — Docker bypasses UFW)
+Auth:       SB_USER basic auth + Tailscale (defense in depth)
+Network:    Isolated bridge (cannot reach Boot or QMD)
+Disabled:   SB_SHELL_BACKEND=off
 ```
 
 ## Security Layers

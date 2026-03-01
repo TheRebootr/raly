@@ -17,9 +17,13 @@ via Telegram. The phases/ directory contains step-by-step implementation specs.
 - **Boot Container (Debian Bookworm)**: Long-lived Docker container based on
   `node:22-bookworm-slim`. Runs the TypeScript/Bun Telegram bot + Claude Code CLI. Has full outbound
   network access. The container IS the security boundary.
+- **SilverBullet Container (Deno/Debian)**: Always-on PWA markdown editor
+  (`silverbulletmd/silverbullet:0.9.4`). Shares `~/BootDrive/workspace` with Boot for mobile
+  browsing/editing. Bound to Tailscale IP only, read-only rootfs, isolated bridge network,
+  shell backend disabled. Auth via `SB_USER` + Tailscale (defense in depth).
 - **Volumes**: `~/BootDrive/workspace` (project files) and `~/BootDrive/data` (SQLite, config) are
   bind-mounted. These are the accepted blast radius — if Boot is compromised, only these
-  volumes are affected.
+  volumes are affected. SilverBullet shares the workspace volume but has no access to data.
 
 ## Critical Rules
 
@@ -88,10 +92,12 @@ Key phases:
 ## File Locations
 
 ```
-~/BootDrive/workspace/     → Mounted as /workspace in container (project files)
-~/BootDrive/data/          → Mounted as /data in container (SQLite, config, Claude auth)
+~/BootDrive/workspace/     → Mounted as /workspace (Boot) and /space (SilverBullet)
+~/BootDrive/data/          → Mounted as /data in Boot container (SQLite, config, Claude auth)
+~/BootDrive/data/.env.silverbullet → SilverBullet credentials (chmod 600)
 ~/BootDrive/app/           → Boot source code (TypeScript/Bun), built into container image
-phases/               → This directory — implementation specs (not deployed)
+~/BootDrive/compose.yml    → Docker Compose: boot + silverbullet + optional qmd (--profile search)
+phases/                    → This directory — implementation specs (not deployed)
 ```
 
 ## Known Operational Concerns

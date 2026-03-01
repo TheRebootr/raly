@@ -4,7 +4,7 @@
 
 RALY is a hardened Mac Mini 2018 running Omarchy 3.x (Arch Linux). This phase locks
 down the OS before any services are exposed. The machine will ultimately run a custom
-Python "Boot" Telegram bot inside a long-lived Docker container (Debian Bookworm), with
+Typescript/Bun "Boot" Telegram bot inside a long-lived Docker container (Debian Bookworm), with
 Claude Code CLI running directly inside that container.
 
 The Mac Mini doubles as an occasional desktop (monitor + keyboard, Chromium, printing,

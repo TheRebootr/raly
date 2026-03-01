@@ -9,26 +9,28 @@ inside a long-lived Docker container (Debian Bookworm), reachable only via Teleg
 single authorized user. Claude Code CLI runs directly inside Boot's container via the Claude
 Agent SDK. The container is the security boundary; mounted volumes are the accepted blast radius.
 Remote access: Tailscale SSH (`tailscale up --ssh`) — no openssh sshd.
+Companion services: SilverBullet (PWA markdown editor for mobile workspace access over Tailscale),
+QMD (optional local search engine, activated via `--profile search`).
 
 ## Phase Map
 
-| File                           | Phase                              | Depends On             | Duration      | Session |
-| ------------------------------ | ---------------------------------- | ---------------------- | ------------- | ------- |
-| `00-preflight.md`              | Pre-Flight Checks                  | Nothing                | 10 min        | 1       |
-| `01-os-hardening.md`           | OS-Level Hardening                 | Phase 0                | 10 min        | 1       |
-| `02-boot-container.md`         | Boot Container Setup               | Phase 1                | 45 min        | 1       |
-| `03-tailscale-setup.md`        | Tailscale ACL Configuration        | Phase 1                | 15 min        | 1       |
-| `04-telegram-bot-setup.md`     | Telegram Bot Token + Host Dirs     | Phase 0                | 20 min        | 2       |
-| `05-pre-build-study.md`        | Pre-Build Research                 | None (can run anytime) | 3-4 hours     | 2       |
-| `05.1-security-module.md`      | Security (auth, rate limit, audit) | Phase 4, Phase 5 study | Customization | 3       |
-| `05.2-config-module.md`        | Config (env, MCP, safety prompts)  | Phase 4                | Customization | 4       |
-| `05.3-telegram-handler.md`     | Telegram handlers (multi-input)    | Phases 5.1, 5.2        | Customization | 4       |
-| `05.4-claude-executor.md`      | Claude session (Agent SDK)         | Phase 5.2              | Customization | 5       |
-| `05.5-session-memory.md`       | Session persistence + memory       | Phase 5.2              | Customization | 5       |
-| `05.6-cron-scheduler.md`       | Health checks + scheduled tasks    | Phase 5.3              | 2 hours       | 6       |
-| `05.8-structured-memory.md`    | Structured memory (memubot-inspired) | Phases 5.4, 5.5      | 4-6 hours     | 6       |
-| `06-verification.md`           | Full Verification                  | All prior phases       | 30 min        | 7       |
-| `07-ongoing-ops.md`            | Ongoing Operations                 | Phase 6                | Reference doc | -       |
+| File                        | Phase                                | Depends On             | Duration      | Session |
+| --------------------------- | ------------------------------------ | ---------------------- | ------------- | ------- |
+| `00-preflight.md`           | Pre-Flight Checks                    | Nothing                | 10 min        | 1       |
+| `01-os-hardening.md`        | OS-Level Hardening                   | Phase 0                | 10 min        | 1       |
+| `02-boot-container.md`      | Boot Container Setup                 | Phase 1                | 45 min        | 1       |
+| `03-tailscale-setup.md`     | Tailscale ACL Configuration          | Phase 1                | 15 min        | 1       |
+| `04-telegram-bot-setup.md`  | Telegram Bot Token + Host Dirs       | Phase 0                | 20 min        | 2       |
+| `05-pre-build-study.md`     | Pre-Build Research                   | None (can run anytime) | 3-4 hours     | 2       |
+| `05.1-security-module.md`   | Security (auth, rate limit, audit)   | Phase 4, Phase 5 study | Customization | 3       |
+| `05.2-config-module.md`     | Config (env, MCP, safety prompts)    | Phase 4                | Customization | 4       |
+| `05.3-telegram-handler.md`  | Telegram handlers (multi-input)      | Phases 5.1, 5.2        | Customization | 4       |
+| `05.4-claude-executor.md`   | Claude session (Agent SDK)           | Phase 5.2              | Customization | 5       |
+| `05.5-session-memory.md`    | Session persistence + memory         | Phase 5.2              | Customization | 5       |
+| `05.6-cron-scheduler.md`    | Health checks + scheduled tasks      | Phase 5.3              | 2 hours       | 6       |
+| `05.8-structured-memory.md` | Structured memory (memubot-inspired) | Phases 5.4, 5.5        | 4-6 hours     | 6       |
+| `06-verification.md`        | Full Verification                    | All prior phases       | 30 min        | 7       |
+| `07-ongoing-ops.md`         | Ongoing Operations                   | Phase 6                | Reference doc | -       |
 
 ## Dependency Graph
 
@@ -64,15 +66,26 @@ Mac Mini (Omarchy 3.x) ← Tailscale SSH (no openssh sshd)
   ├── sysctl hardening (99-raly.conf, separate from Omarchy's 99-sysctl.conf)
   ├── boot-container.service (systemd → docker run)
   │
-  └── Boot Container (node:22-bookworm-slim based, Debian)
-        ├── Claude Code CLI (via Claude Agent SDK, full network for API access)
-        ├── Bun runtime (TypeScript bot, forked from linuz90/claude-telegram-bot)
-        │     ├── security.ts (auth, rate limit, path validation, command safety)
-        │     ├── handlers/ (text, voice, photo, document, video, callback)
-        │     ├── session.ts (Claude session management, streaming)
-        │     └── config.ts + formatting.ts + utils.ts
-        ├── Volume: ~/BootDrive/workspace → /workspace (projects, blast radius)
-        └── Volume: ~/BootDrive/data → /data (SQLite, config, Claude auth)
+  ├── Boot Container (node:22-bookworm-slim based, Debian)
+  │     ├── Claude Code CLI (via Claude Agent SDK, full network for API access)
+  │     ├── Bun runtime (TypeScript bot, forked from linuz90/claude-telegram-bot)
+  │     │     ├── security.ts (auth, rate limit, path validation, command safety)
+  │     │     ├── handlers/ (text, voice, photo, document, video, callback)
+  │     │     ├── session.ts (Claude session management, streaming)
+  │     │     └── config.ts + formatting.ts + utils.ts
+  │     ├── Volume: ~/BootDrive/workspace → /workspace (projects, blast radius)
+  │     └── Volume: ~/BootDrive/data → /data (SQLite, config, Claude auth)
+  │
+  ├── SilverBullet Container (silverbulletmd/silverbullet:0.9.4, Deno/Debian)
+  │     ├── PWA markdown editor — browse/edit workspace from phone/browser
+  │     ├── Bound to Tailscale IP only (100.x.x.x:3000), not LAN or 0.0.0.0
+  │     ├── Auth: SB_USER (basic auth) + Tailscale = defense in depth
+  │     ├── read-only rootfs, shell backend disabled, isolated bridge network
+  │     └── Volume: ~/BootDrive/workspace → /space (shared with Boot)
+  │
+  └── QMD Container (optional, --profile search)
+        ├── Local search engine (GGUF models, MCP over HTTP on port 8181)
+        └── Volume: ~/BootDrive/data/qmd → model cache
 ```
 
 ## Boot Container Specification
@@ -96,6 +109,27 @@ Lifecycle:  systemd unit (Restart=always), NOT --restart flag
 NOT:        --privileged, Docker socket mount, --network none
 ```
 
+### SilverBullet Container Specification
+
+```
+Image:      ghcr.io/silverbulletmd/silverbullet:0.9.4 (pinned, Deno-based)
+Purpose:    PWA markdown editor for mobile workspace access over Tailscale
+Runtime:    --init (tini)
+Memory:     --memory=512m --memory-swap=768m
+CPU:        --cpus=1
+PIDs:       --pids-limit=64
+User:       --user 1000:1000 (matches host UID)
+Security:   --cap-drop ALL --security-opt=no-new-privileges --read-only
+Tmpfs:      /tmp (64MB, noexec,nosuid) + /deno-dir (128MB, noexec,nosuid)
+Volume:     ~/BootDrive/workspace:/space (shared with Boot — changes sync both ways)
+Port:       Tailscale IP only (100.x.x.x:3000) — not 0.0.0.0, not 127.0.0.1
+Auth:       SB_USER env var (basic auth) + Tailscale = defense in depth
+Network:    Isolated bridge (cannot reach Boot or QMD containers)
+Disabled:   SB_SHELL_BACKEND=off (built-in shell disabled)
+Health:     deno eval fetch against /.ping endpoint
+NEVER:      --privileged, Docker socket mount, SB_SHELL_BACKEND=local
+```
+
 ### Why Boot lives in a container (not on host)
 
 1. **Solves the network problem**: Claude Code CLI needs Anthropic API access. No --network
@@ -105,7 +139,7 @@ NOT:        --privileged, Docker socket mount, --network none
 3. **No Omarchy conflicts**: Boot has its own Debian. No config file ownership fights.
 4. **Simple executor**: session.ts manages Claude CLI via the Agent SDK as a subprocess.
    No Docker command builder, no sub-container management.
-5. **Scalable**: Can run multiple Boot containers for different purposes later.
+5. **Scalable**: SilverBullet already runs alongside Boot as a companion service.
 
 ### What was removed from the old design
 

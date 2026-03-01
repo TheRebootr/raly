@@ -24,6 +24,7 @@ runbook.
 | Review health check logs | `cat ~/BootDrive/data/logs/health.log \| tail -20` | Any health check failures |
 | Check Tailscale status | `tailscale status` | All devices expected, no unknown devices |
 | Check service status | `systemctl status boot.service` | Active, no restart loops |
+| Check SilverBullet health | `docker compose ps silverbullet` | Running, healthy |
 | Check disk space | `df -h` | Under 80% usage |
 
 ### Monthly
@@ -32,6 +33,7 @@ runbook.
 |------|---------|---------------|
 | Dependency audit | `cd ~/BootDrive/app && source venv/bin/activate && pip audit` | No known CVEs in 3 dependencies |
 | Rebuild sandbox image | See "Image Rebuild" section below | Pick up base image security patches |
+| Check SilverBullet image | `docker compose pull silverbullet` | Compare digest to pinned version |
 | Review Tailscale devices | https://login.tailscale.com/admin/machines | Revoke any unexpected devices |
 | Rotate audit logs | Automatic via boot-log-rotate.timer | Verify old logs compressed, ancient logs deleted |
 | Check fail2ban | `sudo fail2ban-client status sshd` | Review ban history |
@@ -143,6 +145,36 @@ docker run --rm boot-sandbox:latest claude --version
 docker image prune -f
 ```
 
+### SilverBullet Image Update
+
+SilverBullet uses a pinned external image (not built locally). Update deliberately.
+
+```bash
+cd ~/BootDrive
+
+# Check current version
+docker compose images silverbullet
+
+# Review release notes before updating
+# https://github.com/silverbulletmd/silverbullet/releases
+
+# Update compose.yml with new version tag (e.g., 0.9.5)
+# Then pull and recreate:
+docker compose pull silverbullet
+docker compose up -d silverbullet
+
+# Verify
+docker compose ps silverbullet   # Running, healthy
+# Open http://<tailscale-hostname>:3000 — confirm workspace visible
+
+# IMPORTANT: Version 2.x is a Go rewrite (different base image, different entrypoint).
+# If upgrading past 0.9.x, re-verify:
+#   - read_only: true still works (check /deno-dir → may change)
+#   - CONTAINER_BOOT.md auto-exec feature (added in later versions — needs /dev/null mount)
+#   - Healthcheck command (2.x has curl, 0.9.x uses deno eval)
+#   - tmpfs paths may differ
+```
+
 ### Omarchy Update
 
 ```bash
@@ -168,6 +200,7 @@ sysctl kernel.dmesg_restrict kernel.kptr_restrict
 | `~/BootDrive/app/` | Your harness code | Critical | Git push to private repo |
 | `~/BootDrive/data/boot.db` | Sessions, audit log, conversation history | High | `cp` or `sqlite3 .backup` |
 | `~/BootDrive/data/config.env` | Secrets | Critical | Encrypted backup only |
+| `~/BootDrive/data/.env.silverbullet` | SilverBullet credentials | Critical | Encrypted backup only |
 | `~/BootDrive/workspace/` | Active project files | Medium | Per-project git repos |
 
 ### Backup Commands
@@ -186,7 +219,8 @@ gpg --symmetric --cipher-algo AES256 -o /tmp/config-backup.env.gpg ~/BootDrive/d
 
 ### What NOT to Backup
 
-- Docker images (rebuild from Dockerfile)
+- Docker images (rebuild from Dockerfile, or re-pull for SilverBullet)
+- `.silverbullet.db*` files in workspace (index/cache — rebuilt automatically on startup)
 - Python venv (recreate from requirements.txt)
 - System packages (reinstall from Omarchy)
 
@@ -316,18 +350,20 @@ sqlite3 ~/BootDrive/data/boot.db "VACUUM;"
 ## 7.5 Monitoring Summary
 
 ```
-What           | How                              | Frequency
----------------|----------------------------------|----------
-Boot running   | systemctl status boot.service    | health.timer (6h)
-Disk space     | df -h                            | health.timer (6h)
-Docker running | docker info                      | health.timer (6h)
-DB integrity   | PRAGMA integrity_check           | health.timer (6h)
-Auth attempts  | audit_log WHERE auth_rejected    | Weekly review
-Rate limiting  | audit_log WHERE rate_limited     | Weekly review
-CVEs           | pip audit                        | Monthly
-Image vulns    | trivy image boot-sandbox         | Monthly rebuild
-Tailscale      | tailscale status                 | Weekly
-UFW            | ufw status verbose               | Quarterly
+What              | How                                | Frequency
+------------------|------------------------------------|-----------
+Boot running      | systemctl status boot.service      | health.timer (6h)
+SilverBullet up   | docker compose ps silverbullet     | health.timer (6h)
+Disk space        | df -h                              | health.timer (6h)
+Docker running    | docker info                        | health.timer (6h)
+DB integrity      | PRAGMA integrity_check             | health.timer (6h)
+Auth attempts     | audit_log WHERE auth_rejected      | Weekly review
+Rate limiting     | audit_log WHERE rate_limited       | Weekly review
+CVEs              | pip audit                          | Monthly
+Image vulns       | trivy image boot-sandbox           | Monthly rebuild
+SilverBullet ver  | docker compose images silverbullet | Monthly (check for updates)
+Tailscale         | tailscale status                   | Weekly
+UFW               | ufw status verbose                 | Quarterly
 ```
 
 ## Verification Checklist
@@ -337,6 +373,7 @@ This is a reference document. Verification is ongoing:
 - [ ] Maintenance schedule followed (check logs for dates)
 - [ ] No unresolved CVEs in dependencies
 - [ ] Sandbox image rebuilt within last 30 days
+- [ ] SilverBullet image version reviewed (check for security updates)
 - [ ] Audit log reviewed within last 7 days
 - [ ] Backups current (code pushed, DB backed up)
 - [ ] Tailscale device list clean

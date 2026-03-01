@@ -7,7 +7,7 @@ Omarchy owns `/etc/docker/daemon.json` and manages Docker through `omarchy-updat
 do not touch daemon config — Omarchy owns it entirely.
 
 Boot lives inside a single long-lived Docker container (Debian Bookworm). The container
-runs the Python Telegram bot and Claude Code CLI with full network access. The container
+runs the Node Telegram bot and Claude Code CLI with full network access. The container
 boundary is the security boundary. Mounted volumes (`~/BootDrive/workspace`, `~/BootDrive/data`)
 are the accepted blast radius.
 
@@ -480,14 +480,14 @@ Boot's container runs with these constraints:
 | --------------------- | --------------------- | ---------------------------------------------------------- |
 | `--init`              | tini as PID 1         | Zombie reaping + signal forwarding                         |
 | `--memory=8g`         | Hard limit            | OOM-killed if exceeded, protects host                      |
-| `--memory-swap=12g`    | Swap limit            | 4GB swap buffer for peaks                                  |
+| `--memory-swap=12g`   | Swap limit            | 4GB swap buffer for peaks                                  |
 | `--cpus=4`            | CPU quota             | Reserves 2 host cores for desktop                          |
 | `--pids-limit=512`    | Process limit         | Fork bomb protection                                       |
 | `--user 1000:1000`    | Non-root              | Matches host UID, no privilege inside                      |
 | `--no-new-privileges` | Security option       | Blocks setuid/setgid privilege escalation                  |
 | `--cap-drop ALL`      | Drop all capabilities | No Linux capabilities (NET_RAW, MKNOD, etc.)               |
 | Volumes               | workspace + data only | Blast radius is these two directories                      |
-| Source baked via COPY      | Immutable source      | No /app mount — container can't modify source on host      |
+| Source baked via COPY | Immutable source      | No /app mount — container can't modify source on host      |
 | Network               | Default bridge        | Full outbound (needed for Anthropic API, package installs) |
 
 **What the container CANNOT do:**

@@ -213,7 +213,77 @@ sqlite3 ~/BootDrive/data/boot.db "SELECT count(*) FROM audit_log;"
 # PER-07: Send "/pwd" via Telegram
 ```
 
-### 6.5 Operational Workflow Test
+### 6.5 SilverBullet Verification
+
+These tests verify the SilverBullet companion service is hardened and functional.
+
+```
+Test ID | Test | Expected | Layer
+--------|------|----------|------
+SB-01   | docker compose ps silverbullet | Running, healthy | Service
+SB-02   | From LAN device: curl http://<lan-ip>:3000 | Connection refused (bound to Tailscale IP only) | L1
+SB-03   | From Tailscale: curl http://<tailscale-ip>:3000 | 401 Unauthorized (auth required) | L5
+SB-04   | From Tailscale: login with SB_USER credentials | Success, workspace visible | L5
+SB-05   | docker exec silverbullet ls /space/CLAUDE.md | File exists (workspace shared with Boot) | Volume
+SB-06   | docker exec silverbullet touch /test-readonly | Read-only file system error | L8
+SB-07   | docker exec silverbullet sh -c 'echo test > /space/sb-test.md' | File created | Volume
+SB-08   | cat ~/BootDrive/workspace/sb-test.md | Shows "test" (host sees SilverBullet writes) | Volume
+SB-09   | echo "host-edit" > ~/BootDrive/workspace/sb-test.md | Change visible in SilverBullet UI | Volume
+SB-10   | docker inspect silverbullet --format '{{.HostConfig.NetworkMode}}' | silverbullet bridge (isolated) | L3
+SB-11   | docker exec silverbullet ping -c1 boot 2>&1 | Failure (cannot reach Boot container) | L3
+SB-12   | docker exec silverbullet env | grep SB_SHELL | SB_SHELL_BACKEND=off | L7
+SB-13   | rm ~/BootDrive/workspace/sb-test.md | Cleanup | -
+```
+
+Execution:
+
+```bash
+# SB-01
+docker compose ps silverbullet
+
+# SB-02 (from LAN device, NOT via Tailscale)
+curl -s -o /dev/null -w "%{http_code}" http://<mac-mini-lan-ip>:3000
+# Should fail / connection refused
+
+# SB-03 (from Tailscale device, no credentials)
+curl -s -o /dev/null -w "%{http_code}" http://<tailscale-ip>:3000
+# Should return 401
+
+# SB-04: Open http://<tailscale-ip>:3000 in browser, login with SB_USER credentials
+# Verify workspace tree visible (notes/, projects/, CLAUDE.md, MEMORY.md)
+
+# SB-05
+docker exec silverbullet ls /space/CLAUDE.md
+
+# SB-06
+docker exec silverbullet touch /test-readonly
+# Should fail: Read-only file system
+
+# SB-07
+docker exec silverbullet sh -c 'echo test > /space/sb-test.md'
+
+# SB-08
+cat ~/BootDrive/workspace/sb-test.md
+
+# SB-09
+echo "host-edit" > ~/BootDrive/workspace/sb-test.md
+# Refresh SilverBullet UI, verify change visible
+
+# SB-10
+docker inspect silverbullet --format '{{.HostConfig.NetworkMode}}'
+
+# SB-11
+docker exec silverbullet ping -c1 boot 2>&1
+# Should fail: unknown host or no route
+
+# SB-12
+docker exec silverbullet env | grep SB_SHELL
+
+# SB-13 (cleanup)
+rm ~/BootDrive/workspace/sb-test.md
+```
+
+### 6.6 Operational Workflow Test
 
 End-to-end test of the actual use case: working on a project via Telegram.
 
@@ -275,6 +345,7 @@ Operational tests (OPS-*) are important but non-blocking if infrastructure tests
 - [ ] All NET-* tests pass (network isolation confirmed)
 - [ ] All DOK-* tests pass (Docker hardening confirmed)
 - [ ] All SEC-* tests pass (application security confirmed)
+- [ ] All SB-* tests pass (SilverBullet hardening confirmed)
 - [ ] All PER-* tests pass (persistence confirmed)
 - [ ] All OPS-* tests pass (operational workflow confirmed)
 - [ ] Verification results documented in `~/BootDrive/data/verification-results.md`

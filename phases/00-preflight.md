@@ -3,7 +3,7 @@
 ## Context
 
 RALY is a hardened Mac Mini 2018 (i5 6-core, 32GB, Omarchy 3.x Arch Linux) that
-will run a custom Python "Boot" harness inside a long-lived Docker container (Debian
+will run a custom AI harness inside a long-lived Docker container (Debian
 Bookworm), reachable only via Telegram. This phase verifies the machine is in the
 expected state before any hardening begins.
 
